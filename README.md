@@ -75,6 +75,11 @@ managed through the CLI:
 | `agentgraph connector twg videos <on\|off>` | Index Loom videos and transcripts |
 | `agentgraph connector twg status` | Binary, version, session, and configured scopes |
 
+`<site>` is the tenant name, and a site URL is accepted in its place. Both host spellings are
+understood, so `hello`, `hello.atlassian.net` and the per-product domain a migrated tenant is
+served from (`hello.jira.atlassian.cloud`, `hello.confluence.atlassian.cloud`) all configure the
+site `hello`, and browsing either host is observed. Anything else is rejected rather than stored.
+
 ## Refresh behaviour
 
 - **Observe / fetch:** browsing or fetching a supported URL fetches that resource. Confluence short
