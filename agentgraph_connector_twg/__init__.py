@@ -228,6 +228,30 @@ class TwgConnector(BaseConnector):
         resolved = await self._resolve_via_twg(url)
         return resolved.to_reference() if resolved is not None else None
 
+    async def observation_url_patterns(self) -> list[str]:
+        """Narrow observation to the configured Atlassian sites.
+
+        Falling back to the `*.atlassian.net` wildcard keeps observation working
+        before any site is configured, but once one is, browsing an unrelated
+        tenant (a customer's or partner's site) should not be observed.
+        """
+        sites = load_settings().sites
+        if not sites:
+            return type(self).url_patterns
+        atlassian_paths = ("browse", "jira", "wiki")
+        return [
+            *(
+                f"https://{site}.atlassian.net/{path}/*"
+                for site in sites
+                for path in atlassian_paths
+            ),
+            *(
+                pattern
+                for pattern in type(self).url_patterns
+                if "atlassian.net" not in pattern
+            ),
+        ]
+
     async def _resolve_via_twg(self, url: str) -> urls.TwgTarget | None:
         """Resolve a Confluence short link through `twg resolve`."""
         site = urls.site_from_url(url)

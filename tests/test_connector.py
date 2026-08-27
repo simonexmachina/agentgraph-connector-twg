@@ -136,6 +136,42 @@ async def test_unresolvable_tiny_link_returns_none(
     assert await connector.resolve_observation_url("https://acme.atlassian.net/wiki/x/AbCd") is None
 
 
+async def test_observation_patterns_scope_to_configured_sites(
+    connector: twg_connector.TwgConnector,
+) -> None:
+    config.save_settings(config.TwgSettings(sites=["hello", "acme"]))
+
+    patterns = await connector.observation_url_patterns()
+
+    assert "https://hello.atlassian.net/wiki/*" in patterns
+    assert "https://hello.atlassian.net/browse/*" in patterns
+    assert "https://acme.atlassian.net/jira/*" in patterns
+    assert not any("*.atlassian.net" in pattern for pattern in patterns)
+    assert "https://www.loom.com/share/*" in patterns
+
+
+async def test_observation_patterns_fall_back_to_the_wildcard(
+    connector: twg_connector.TwgConnector,
+) -> None:
+    patterns = await connector.observation_url_patterns()
+
+    assert patterns == twg_connector.TwgConnector.url_patterns
+
+
+def test_personal_space_pages_resolve(connector: twg_connector.TwgConnector) -> None:
+    url = (
+        "https://hello.atlassian.net/wiki/spaces/"
+        "~71202099c5dd7aaf6d47bbbc210f883d8259bb/pages/7650323840/Team+Brain"
+    )
+
+    reference = connector.resolve_url(url)
+
+    assert reference is not None
+    assert reference.resource_id == "confluence/hello/7650323840"
+    assert reference.fetch_meta is not None
+    assert reference.fetch_meta["space_key"] == "~71202099c5dd7aaf6d47bbbc210f883d8259bb"
+
+
 # ----------------------------------------------------------------------
 # Fetch
 # ----------------------------------------------------------------------
