@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentgraph-connector-twg"
+version = "0.1.0"
+description = "Atlassian Teamwork Graph (twg) connector for AgentGraph"
+requires-python = ">=3.12"
+dependencies = [
+    "agentgraph-server>=0.6,<0.8",
+    "pydantic>=2.12.5",
+]
+
+[project.entry-points."agentgraph.connectors"]
+twg = "agentgraph_connector_twg:TwgConnector"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.408",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.11.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["agentgraph_connector_twg*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by the formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agentgraph_connector_twg"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+include = ["agentgraph_connector_twg", "tests"]
+# AgentGraph is an editable install, which pyright cannot follow, so its source
+# tree is added directly. Check the repositories out as siblings, or override
+# these paths locally.
+venvPath = "../agent-graph"
+venv = ".venv"
+extraPaths = ["../agent-graph", ".", "tests"]
