@@ -12,11 +12,25 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
 CONFIG_FILENAME = "twg.json"
+
+
+def normalise_site(value: str) -> str:
+    """Reduce a site reference to the bare site name `twg --site` expects.
+
+    Accepts what a user is likely to paste — `hello`, `hello.atlassian.net`, or
+    `https://hello.atlassian.net/jira/...` — and yields `hello`, which is also
+    the value URL construction interpolates.
+    """
+    site = value.strip()
+    if "//" in site:
+        site = site.split("//", 1)[1]
+    site = site.split("/", 1)[0].split("@")[-1].split(":")[0].lower()
+    return site.removesuffix(".atlassian.net")
 
 
 class TwgSettings(BaseModel):
@@ -24,6 +38,12 @@ class TwgSettings(BaseModel):
 
     sites: list[str] = Field(default_factory=list)
     """Atlassian sites to pass as `--site`. The first entry is the default."""
+
+    @field_validator("sites", mode="after")
+    @classmethod
+    def _normalise_sites(cls, value: list[str]) -> list[str]:
+        """Normalise on read as well as write, so older config files keep working."""
+        return list(dict.fromkeys(normalise_site(site) for site in value if site.strip()))
 
     jql: list[str] = Field(default_factory=list)
     """JQL queries swept by `ingest()` in addition to the user's own activity."""

@@ -626,6 +626,34 @@ def test_scope_commands_persist_and_report(monkeypatch: pytest.MonkeyPatch) -> N
     assert config.load_settings().jql == []
 
 
+@pytest.mark.parametrize(
+    "given",
+    ["hello", "hello.atlassian.net", "https://hello.atlassian.net/jira/software", "HELLO"],
+)
+def test_site_values_are_reduced_to_the_bare_site_name(given: str) -> None:
+    result = twg_connector.TwgConnector.run_cli_command(["add-site", given])
+
+    assert result["sites"] == ["hello"]
+    assert config.load_settings().default_site == "hello"
+
+
+def test_stored_full_hostnames_are_normalised_on_read(isolated_config: Path) -> None:
+    (isolated_config / config.CONFIG_FILENAME).write_text(
+        json.dumps({"sites": ["hello.atlassian.net", "hello"]}), encoding="utf-8"
+    )
+
+    assert config.load_settings().sites == ["hello"]
+
+
+def test_remove_site_accepts_either_spelling() -> None:
+    twg_connector.TwgConnector.run_cli_command(["add-site", "hello"])
+
+    result = twg_connector.TwgConnector.run_cli_command(["remove-site", "hello.atlassian.net"])
+
+    assert result["removed"] == ["hello"]
+    assert config.load_settings().sites == []
+
+
 def test_space_keys_are_normalised_to_upper_case() -> None:
     result = twg_connector.TwgConnector.run_cli_command(["add-space", "eng"])
 

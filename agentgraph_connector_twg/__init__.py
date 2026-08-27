@@ -48,6 +48,7 @@ from agentgraph_connector_twg.config import (
     add_values,
     config_path,
     load_settings,
+    normalise_site,
     remove_values,
     save_settings,
 )
@@ -760,7 +761,7 @@ class TwgConnector(BaseConnector):
                 f"Unknown twg connector command '{command}'. Available: status, add-site, "
                 "remove-site, add-jql, remove-jql, add-space, remove-space, videos"
             )
-        values = _parse_values(rest, command=command, upper=field == "spaces")
+        values = _parse_values(rest, command=command, field=field)
         if command.startswith("add-"):
             settings, changed = add_values(field, values)
             key = "added"
@@ -910,14 +911,18 @@ def _format_status(result: Mapping[str, Any]) -> str:
     )
 
 
-def _parse_values(args: list[str], *, command: str, upper: bool) -> list[str]:
+def _parse_values(args: list[str], *, command: str, field: str) -> list[str]:
     values = [arg.strip() for arg in args if arg.strip()]
     for value in values:
         if value.startswith("--"):
             raise ValueError(f"Unknown {command} option: {value}")
     if not values:
         raise ValueError(f"{command} requires at least one value\n\n{_usage()}")
-    return [value.upper() for value in values] if upper else values
+    if field == "spaces":
+        return [value.upper() for value in values]
+    if field == "sites":
+        return [normalise_site(value) for value in values]
+    return values
 
 
 def _parse_site_args(args: list[str]) -> list[str]:
@@ -928,7 +933,7 @@ def _parse_site_args(args: list[str]) -> list[str]:
         if arg == "--site":
             if index + 1 >= len(args):
                 raise ValueError("--site requires a value")
-            sites.append(args[index + 1])
+            sites.append(normalise_site(args[index + 1]))
             index += 2
             continue
         raise ValueError(f"Unknown twg auth option: {arg}")
