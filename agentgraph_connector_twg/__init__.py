@@ -83,9 +83,7 @@ class TwgConnector(BaseConnector):
     fetch_policy = FetchPolicy(stale_after_seconds=_STALE_AFTER_SECONDS)
     poll_interval: timedelta | None = _POLL_INTERVAL  # type: ignore[assignment]
     url_patterns = [
-        "https://*.atlassian.net/browse/*",
-        "https://*.atlassian.net/jira/*",
-        "https://*.atlassian.net/wiki/*",
+        *urls.site_url_patterns("*"),
         "https://www.loom.com/share/*",
         "https://www.loom.com/embed/*",
     ]
@@ -231,25 +229,17 @@ class TwgConnector(BaseConnector):
     async def observation_url_patterns(self) -> list[str]:
         """Narrow observation to the configured Atlassian sites.
 
-        Falling back to the `*.atlassian.net` wildcard keeps observation working
-        before any site is configured, but once one is, browsing an unrelated
-        tenant (a customer's or partner's site) should not be observed.
+        Falling back to the any-tenant wildcards keeps observation working before
+        any site is configured, but once one is, browsing an unrelated tenant (a
+        customer's or partner's site) should not be observed.
         """
         sites = load_settings().sites
         if not sites:
             return type(self).url_patterns
-        atlassian_paths = ("browse", "jira", "wiki")
+        wildcards = set(urls.site_url_patterns("*"))
         return [
-            *(
-                f"https://{site}.atlassian.net/{path}/*"
-                for site in sites
-                for path in atlassian_paths
-            ),
-            *(
-                pattern
-                for pattern in type(self).url_patterns
-                if "atlassian.net" not in pattern
-            ),
+            *(pattern for site in sites for pattern in urls.site_url_patterns(site)),
+            *(pattern for pattern in type(self).url_patterns if pattern not in wildcards),
         ]
 
     async def _resolve_via_twg(self, url: str) -> urls.TwgTarget | None:
@@ -826,7 +816,8 @@ class TwgConnector(BaseConnector):
                 "  status",
                 "      Report the twg binary, version, session, and configured scopes.",
                 "  add-site <site> / remove-site <site>",
-                "      Manage Atlassian sites (the <site> in https://<site>.atlassian.net).",
+                "      Manage Atlassian sites (the <site> in https://<site>.atlassian.net or",
+                "      https://<site>.jira.atlassian.cloud). A site URL is accepted too.",
                 "      The first configured site is the default for twg calls.",
                 "  add-jql <jql> / remove-jql <jql>",
                 "      Manage JQL queries swept by ingest, then queue an ingest.",

@@ -9,28 +9,49 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from agentgraph_connector_twg import urls
+
 logger = logging.getLogger(__name__)
 
 CONFIG_FILENAME = "twg.json"
 
+_BARE_SITE = re.compile(urls.SITE_LABEL)
 
-def normalise_site(value: str) -> str:
+
+def parse_site(value: str) -> str | None:
     """Reduce a site reference to the bare site name `twg --site` expects.
 
-    Accepts what a user is likely to paste — `hello`, `hello.atlassian.net`, or
-    `https://hello.atlassian.net/jira/...` — and yields `hello`, which is also
-    the value URL construction interpolates.
+    Accepts what a user is likely to paste — `hello`, `hello.atlassian.net`,
+    `hello.jira.atlassian.cloud`, or a URL on either host — and yields `hello`,
+    which is also the value URL construction interpolates. Returns None for
+    anything that is not an Atlassian site, rather than guessing: a host that is
+    kept whole here reappears as `https://<host>.atlassian.net/...` in the
+    observation patterns, which matches nothing.
     """
     site = value.strip()
     if "//" in site:
         site = site.split("//", 1)[1]
     site = site.split("/", 1)[0].split("@")[-1].split(":")[0].lower()
-    return site.removesuffix(".atlassian.net")
+    if "." in site:
+        return urls.site_from_host(site)
+    return site if _BARE_SITE.fullmatch(site) else None
+
+
+def normalise_site(value: str) -> str:
+    """Like `parse_site`, but reject an unusable site reference."""
+    site = parse_site(value)
+    if site is None:
+        raise ValueError(
+            f"{value!r} is not an Atlassian site. Pass the site name, or a URL on "
+            f"one of {', '.join(urls.site_host_examples('<site>'))}."
+        )
+    return site
 
 
 class TwgSettings(BaseModel):
@@ -42,8 +63,25 @@ class TwgSettings(BaseModel):
     @field_validator("sites", mode="after")
     @classmethod
     def _normalise_sites(cls, value: list[str]) -> list[str]:
-        """Normalise on read as well as write, so older config files keep working."""
-        return list(dict.fromkeys(normalise_site(site) for site in value if site.strip()))
+        """Normalise on read as well as write, so older config files keep working.
+
+        Unusable entries are dropped rather than rejected: a config file written
+        before site references were validated must still load.
+        """
+        sites: list[str] = []
+        for entry in value:
+            if not entry.strip():
+                continue
+            site = parse_site(entry)
+            if site is None:
+                logger.warning(
+                    "Ignoring configured twg site %r: not an Atlassian site. "
+                    "Re-add it with `agentgraph connector twg add-site <site>`.",
+                    entry,
+                )
+                continue
+            sites.append(site)
+        return list(dict.fromkeys(sites))
 
     jql: list[str] = Field(default_factory=list)
     """JQL queries swept by `ingest()` in addition to the user's own activity."""

@@ -145,8 +145,9 @@ async def test_observation_patterns_scope_to_configured_sites(
 
     assert "https://hello.atlassian.net/wiki/*" in patterns
     assert "https://hello.atlassian.net/browse/*" in patterns
+    assert "https://hello.jira.atlassian.cloud/browse/*" in patterns
     assert "https://acme.atlassian.net/jira/*" in patterns
-    assert not any("*.atlassian.net" in pattern for pattern in patterns)
+    assert not any("https://*." in pattern for pattern in patterns)
     assert "https://www.loom.com/share/*" in patterns
 
 
@@ -664,7 +665,15 @@ def test_scope_commands_persist_and_report(monkeypatch: pytest.MonkeyPatch) -> N
 
 @pytest.mark.parametrize(
     "given",
-    ["hello", "hello.atlassian.net", "https://hello.atlassian.net/jira/software", "HELLO"],
+    [
+        "hello",
+        "hello.atlassian.net",
+        "https://hello.atlassian.net/jira/software",
+        "HELLO",
+        "hello.jira.atlassian.cloud",
+        "https://hello.jira.atlassian.cloud/browse/SQA-703",
+        "https://hello.confluence.atlassian.cloud/wiki/spaces/ENG/overview",
+    ],
 )
 def test_site_values_are_reduced_to_the_bare_site_name(given: str) -> None:
     result = twg_connector.TwgConnector.run_cli_command(["add-site", given])
@@ -673,9 +682,30 @@ def test_site_values_are_reduced_to_the_bare_site_name(given: str) -> None:
     assert config.load_settings().default_site == "hello"
 
 
+@pytest.mark.parametrize(
+    "given",
+    ["https://hello.jira.atlassian.com", "hello.example.com", "https://example.com/browse/SQA-1"],
+)
+def test_add_site_rejects_hosts_that_are_not_atlassian_sites(given: str) -> None:
+    with pytest.raises(ValueError, match="not an Atlassian site"):
+        twg_connector.TwgConnector.run_cli_command(["add-site", given])
+
+    assert config.load_settings().sites == []
+
+
 def test_stored_full_hostnames_are_normalised_on_read(isolated_config: Path) -> None:
     (isolated_config / config.CONFIG_FILENAME).write_text(
-        json.dumps({"sites": ["hello.atlassian.net", "hello"]}), encoding="utf-8"
+        json.dumps({"sites": ["hello.atlassian.net", "hello.jira.atlassian.cloud", "hello"]}),
+        encoding="utf-8",
+    )
+
+    assert config.load_settings().sites == ["hello"]
+
+
+def test_stored_sites_that_are_not_atlassian_hosts_are_dropped(isolated_config: Path) -> None:
+    """A config written before site references were validated must still load."""
+    (isolated_config / config.CONFIG_FILENAME).write_text(
+        json.dumps({"sites": ["hello.jira.atlassian.com", "hello"]}), encoding="utf-8"
     )
 
     assert config.load_settings().sites == ["hello"]

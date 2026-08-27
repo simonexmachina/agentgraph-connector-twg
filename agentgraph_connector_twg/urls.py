@@ -24,7 +24,25 @@ SOURCE: Final[str] = "twg"
 TargetKind = Literal["work-item", "page", "space", "project", "video"]
 
 _ISSUE_KEY = r"[A-Z][A-Z0-9_]+-\d+"
-_SITE_HOST = re.compile(r"^(?P<site>[A-Za-z0-9][A-Za-z0-9-]*)\.atlassian\.net$")
+
+SITE_LABEL: Final[str] = r"[A-Za-z0-9][A-Za-z0-9-]*"
+"""Pattern a bare site name has to match, shared with config validation."""
+
+_SITE_DOMAIN_PATHS: Final[dict[str, tuple[str, ...]]] = {
+    # A tenant serves every product from `<site>.atlassian.net`, so narrow that
+    # host to the paths this connector understands. Product domains are already
+    # scoped to one product; Atlassian moves tenants onto them one product at a
+    # time and keeps the paths (and an `atlassian.net` redirect) unchanged, so
+    # both spellings have to be recognised.
+    "atlassian.net": ("browse", "jira", "wiki"),
+    "jira.atlassian.cloud": ("browse", "jira"),
+    "confluence.atlassian.cloud": ("wiki",),
+}
+_SITE_HOST = re.compile(
+    "^(?P<site>{})\\.(?:{})$".format(
+        SITE_LABEL, "|".join(re.escape(domain) for domain in _SITE_DOMAIN_PATHS)
+    )
+)
 
 _BROWSE_PATH = re.compile(rf"^/browse/(?P<key>{_ISSUE_KEY})/?$", re.IGNORECASE)
 _JIRA_PROJECT_PATH = re.compile(
@@ -302,8 +320,34 @@ def parse_ari(ari: str, *, site: str | None = None) -> TwgTarget | None:
 
 def site_from_url(url: str) -> str | None:
     """Return the Atlassian site name in a URL host, if present."""
-    match = _SITE_HOST.match(urlsplit(url).netloc.lower().split(":")[0])
+    return site_from_host(urlsplit(url).netloc)
+
+
+def site_from_host(host: str) -> str | None:
+    """Return the site name in an Atlassian host, or None if it is not one.
+
+    Recognises `hello.atlassian.net` and the per-product domains a migrated
+    tenant is served from, such as `hello.jira.atlassian.cloud`.
+    """
+    match = _SITE_HOST.match(host.strip().lower().split(":")[0])
     return match.group("site") if match else None
+
+
+def site_host_examples(site: str) -> tuple[str, ...]:
+    """Host spellings for a site, for use in error messages and documentation."""
+    return tuple(f"{site}.{domain}" for domain in _SITE_DOMAIN_PATHS)
+
+
+def site_url_patterns(site: str) -> list[str]:
+    """Observation URL patterns covering every host spelling for a site.
+
+    `site` may be `*` to match any tenant.
+    """
+    return [
+        f"https://{site}.{domain}/{path}/*"
+        for domain, paths in _SITE_DOMAIN_PATHS.items()
+        for path in paths
+    ]
 
 
 def _workitem_target(site: str, key: str) -> TwgTarget:

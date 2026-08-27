@@ -46,6 +46,21 @@ from agentgraph_connector_twg import urls
             "confluence/acme/space/ENG",
         ),
         (
+            "https://acme.jira.atlassian.cloud/browse/ENG-42",
+            "work-item",
+            "jira/acme/ENG-42",
+        ),
+        (
+            "https://acme.jira.atlassian.cloud/jira/software/projects/ENG/summary",
+            "project",
+            "jira/acme/project/ENG",
+        ),
+        (
+            "https://acme.confluence.atlassian.cloud/wiki/spaces/ENG/pages/884736/Plan",
+            "page",
+            "confluence/acme/884736",
+        ),
+        (
             "https://www.loom.com/share/abc123def456",
             "video",
             "loom/abc123def456",
@@ -69,6 +84,8 @@ def test_parse_url_identifies_supported_resources(url: str, kind: str, entity_id
     "url",
     [
         "https://example.com/browse/ENG-42",
+        "https://acme.jira.atlassian.com/browse/ENG-42",
+        "https://acme.atlassian.cloud/browse/ENG-42",
         "https://acme.atlassian.net/",
         "https://acme.atlassian.net/browse/not-an-issue",
         "https://www.loom.com/looks/abc123",
@@ -162,4 +179,24 @@ def test_parse_ari_ignores_unsupported_products() -> None:
 
 def test_site_from_url() -> None:
     assert urls.site_from_url("https://acme.atlassian.net/browse/ENG-42") == "acme"
+    assert urls.site_from_url("https://acme.jira.atlassian.cloud/browse/ENG-42") == "acme"
     assert urls.site_from_url("https://www.loom.com/share/abc") is None
+
+
+def test_site_from_host_rejects_lookalike_domains() -> None:
+    assert urls.site_from_host("acme.atlassian.net") == "acme"
+    assert urls.site_from_host("ACME.Jira.Atlassian.Cloud") == "acme"
+    assert urls.site_from_host("acme.jira.atlassian.com") is None
+    assert urls.site_from_host("acme.atlassian.net.evil.test") is None
+    assert urls.site_from_host("acme") is None
+
+
+def test_site_url_patterns_cover_every_host_spelling() -> None:
+    patterns = urls.site_url_patterns("acme")
+
+    assert "https://acme.atlassian.net/browse/*" in patterns
+    assert "https://acme.atlassian.net/wiki/*" in patterns
+    assert "https://acme.jira.atlassian.cloud/browse/*" in patterns
+    assert "https://acme.jira.atlassian.cloud/jira/*" in patterns
+    assert "https://acme.confluence.atlassian.cloud/wiki/*" in patterns
+    assert "https://acme.jira.atlassian.cloud/wiki/*" not in patterns
