@@ -179,19 +179,19 @@ def _append_inline(blocks: list[str], text: str) -> None:
         blocks.append(text)
 
 
-def collect_mentions(values: Any) -> list[tuple[str, str]]:
+def collect_mentions(values: Any) -> list[tuple[str, str | None]]:
     """Return `(account_id, label)` pairs for ADF mention nodes, in document order.
 
     Mentions identify people by account id, so they become `mentions` edges to a
     Person even when the surrounding text is all that a reader sees.
     """
-    found: list[tuple[str, str]] = []
+    found: list[tuple[str, str | None]] = []
     seen: set[str] = set()
     _walk_mentions(values, found, seen)
     return found
 
 
-def _walk_mentions(node: Any, found: list[tuple[str, str]], seen: set[str]) -> None:
+def _walk_mentions(node: Any, found: list[tuple[str, str | None]], seen: set[str]) -> None:
     if isinstance(node, list):
         for child in node:  # pyright: ignore[reportUnknownVariableType]
             _walk_mentions(child, found, seen)
@@ -204,7 +204,9 @@ def _walk_mentions(node: Any, found: list[tuple[str, str]], seen: set[str]) -> N
         account_id = pick_str(attrs, "id", "accountId")
         if account_id is not None and account_id not in seen:
             seen.add(account_id)
-            label = (pick_str(attrs, "text") or account_id).lstrip("@")
+            label = pick_str(attrs, "text")
+            if label is not None:
+                label = label.lstrip("@")
             found.append((account_id, label))
         return
     for value in mapping.values():
@@ -224,13 +226,12 @@ def person_from_payload(
             return PersonRecord(
                 platform=platform,
                 platform_user_id=payload.strip(),
-                display_name=payload.strip(),
             )
         return None
 
     account_id = pick_str(mapping, "accountId", "account_id", "id", "ari")
     email = pick_str(mapping, "emailAddress", "email")
-    display_name = pick_str(mapping, "displayName", "name", "publicName", "nickname")
+    display_name = pick_str(mapping, "displayName", "fullName", "name", "publicName", "nickname")
     user_id = account_id or email or display_name
     if user_id is None:
         return None

@@ -75,8 +75,8 @@ class TwgSettings(BaseModel):
             site = parse_site(entry)
             if site is None:
                 logger.warning(
-                    "Ignoring configured twg site %r: not an Atlassian site. "
-                    "Re-add it with `agentgraph connector twg add-site <site>`.",
+                    "Dropping twg connector site %r: not an Atlassian site. Configure "
+                    "sites with `agentgraph connector twg add-site <site>`.",
                     entry,
                 )
                 continue
@@ -122,7 +122,26 @@ def load_settings() -> TwgSettings:
         return TwgSettings()
     if not isinstance(raw, dict):
         return TwgSettings()
-    return TwgSettings.model_validate(raw)
+    settings = TwgSettings.model_validate(raw)
+    _persist_normalised_sites(settings, raw.get("sites"))
+    return settings
+
+
+def _persist_normalised_sites(settings: TwgSettings, stored: Any) -> None:
+    """Write back sites that normalisation rewrote or dropped.
+
+    Without this the correction is re-derived on every load: a site the CLI can
+    no longer produce stays in the file forever, warning each time, because the
+    scope commands only save when the caller changed something.
+    """
+    if not isinstance(stored, list) or stored == settings.sites:
+        return
+    try:
+        save_settings(settings)
+    except OSError as exc:  # a read-only config dir must not break a fetch
+        logger.debug("Could not rewrite twg connector config at %s: %s", config_path(), exc)
+        return
+    logger.info("Rewrote sites in %s as %s", config_path(), settings.sites or "none")
 
 
 def save_settings(settings: TwgSettings) -> TwgSettings:

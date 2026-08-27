@@ -24,6 +24,7 @@ from agentgraph.connectors.base import (
     EntityBatch,
     EntityRecord,
     FetchPolicy,
+    PersonRecord,
     ResourceType,
     ResourceUnavailableError,
     SourceReference,
@@ -56,6 +57,7 @@ from agentgraph_connector_twg.payloads import (
     as_mapping,
     as_sequence,
     nested_str,
+    person_from_payload,
     pick,
     pick_mapping,
     pick_str,
@@ -96,6 +98,7 @@ class TwgConnector(BaseConnector):
 
     def __init__(self) -> None:
         self._space_keys: dict[str, tuple[str, str | None]] = {}
+        self._person_lookup_cache: dict[str, PersonRecord] = {}
 
     # ------------------------------------------------------------------
     # Auth and identity
@@ -303,16 +306,63 @@ class TwgConnector(BaseConnector):
             raise ResourceUnavailableError(f"{resource_id} is not a twg resource identifier")
 
         if target.kind == "work-item":
-            return await self._fetch_workitem(target, settings)
-        if target.kind == "page":
-            return await self._fetch_page(target, settings)
-        if target.kind == "space":
-            return await self._fetch_space(target, settings)
-        if target.kind == "project":
-            return self._project_batch(target)
-        if target.kind == "video":
-            return await self._fetch_video(target, settings)
-        raise ResourceUnavailableError(f"twg cannot fetch {resource_id}")
+            batch = await self._fetch_workitem(target, settings)
+        elif target.kind == "page":
+            batch = await self._fetch_page(target, settings)
+        elif target.kind == "space":
+            batch = await self._fetch_space(target, settings)
+        elif target.kind == "project":
+            batch = self._project_batch(target)
+        elif target.kind == "video":
+            batch = await self._fetch_video(target, settings)
+        else:
+            raise ResourceUnavailableError(f"twg cannot fetch {resource_id}")
+        return await self._enrich_people(batch, site=self._site(target, settings))
+
+    async def _enrich_people(self, batch: EntityBatch, *, site: str | None) -> EntityBatch:
+        """Fill display names for people emitted with only an Atlassian account ID."""
+        unresolved_ids = {
+            person.platform_user_id
+            for person in batch.persons
+            if person.platform == self.source and person.display_name is None
+        }
+        if not unresolved_ids:
+            return batch
+
+        missing_ids = unresolved_ids.difference(self._person_lookup_cache)
+        if missing_ids:
+            args = ["user", "bulk-lookup"]
+            for account_id in sorted(missing_ids):
+                args.extend(["--account-id", account_id])
+            try:
+                envelope = await run_twg(args, site=site)
+            except TwgError as exc:
+                logger.debug("twg user lookup failed for %d people: %s", len(missing_ids), exc)
+            else:
+                for payload in batch_items(payload_data(envelope)):
+                    person = person_from_payload(payload, platform=self.source)
+                    if person is not None:
+                        self._person_lookup_cache[person.platform_user_id] = person
+
+        batch.persons = [
+            self._with_person_identity(person, self._person_lookup_cache.get(person.platform_user_id))
+            if person.platform == self.source and person.display_name is None
+            else person
+            for person in batch.persons
+        ]
+        return batch
+
+    @staticmethod
+    def _with_person_identity(person: PersonRecord, identity: PersonRecord | None) -> PersonRecord:
+        if identity is None or identity.display_name is None:
+            return person
+        return person.model_copy(
+            update={
+                "canonical_email": identity.canonical_email or person.canonical_email,
+                "display_name": identity.display_name,
+                "metadata": {**person.metadata, **identity.metadata},
+            }
+        )
 
     def _target(
         self,

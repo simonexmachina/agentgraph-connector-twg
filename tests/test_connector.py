@@ -256,6 +256,160 @@ async def test_fetch_page_requests_markdown_and_resolves_space(
     assert folder.title == "Engineering"
     assert any("--format md" in command for command in fake.commands())
     assert any("confluence space get 65539" in command for command in fake.commands())
+    assert not any(command.startswith("user bulk-lookup") for command in fake.commands())
+
+
+async def test_fetch_page_enriches_id_only_people_and_caches_them(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = page_payload()
+    payload["metadata"]["authorId"] = "acct-simon"
+    payload["metadata"]["version"]["authorId"] = "acct-simon"
+    fake = _FakeTwg(
+        {
+            "confluence content get": payload,
+            "user bulk-lookup": {
+                "items": [
+                    {
+                        "input": "acct-simon",
+                        "ok": True,
+                        "data": {
+                            "accountId": "acct-simon",
+                            "displayName": "Simon Wade",
+                            "fullName": "Simon Wade",
+                            "userAri": "ari:cloud:identity::user/acct-simon",
+                        },
+                    }
+                ]
+            },
+        }
+    )
+    _install(monkeypatch, fake)
+
+    first = await connector.fetch(
+        "document",
+        "confluence/acme/884736",
+        meta={"space_key": "ENG"},
+    )
+    second = await connector.fetch(
+        "document",
+        "confluence/acme/884736",
+        meta={"space_key": "ENG"},
+    )
+
+    assert {person.display_name for person in first.persons} == {"Simon Wade"}
+    assert {person.display_name for person in second.persons} == {"Simon Wade"}
+    assert any(
+        edge.edge_type == "authored"
+        and edge.source_platform_user_id == "acct-simon"
+        for edge in first.edges
+    )
+    lookups = [command for command in fake.commands() if command.startswith("user bulk-lookup")]
+    assert lookups == ["user bulk-lookup --account-id acct-simon"]
+
+
+async def test_fetch_keeps_id_only_people_when_lookup_fails(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = page_payload()
+    payload["metadata"]["authorId"] = "acct-unavailable"
+    fake = _FakeTwg(
+        {
+            "confluence content get": payload,
+            "user bulk-lookup": TwgCommandError("directory unavailable"),
+        }
+    )
+    _install(monkeypatch, fake)
+
+    batch = await connector.fetch(
+        "document",
+        "confluence/acme/884736",
+        meta={"space_key": "ENG"},
+    )
+
+    person = next(person for person in batch.persons if person.platform_user_id == "acct-unavailable")
+    assert person.display_name is None
+    assert any(
+        edge.edge_type == "authored"
+        and edge.source_platform_user_id == "acct-unavailable"
+        for edge in batch.edges
+    )
+
+
+async def test_fetch_workitem_enriches_id_only_people_and_mentions(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = workitem_payload(reporter="acct-simon")
+    mention_attrs = payload["description"]["content"][0]["content"][1]["attrs"]
+    mention_attrs.pop("text")
+    mention_attrs["id"] = "acct-lee"
+    fake = _FakeTwg(
+        {
+            "jira workitem get": payload,
+            "context jira workitem": {"relationshipSummary": []},
+            "user bulk-lookup": {
+                "items": [
+                    {
+                        "input": "acct-lee",
+                        "ok": True,
+                        "data": {"accountId": "acct-lee", "displayName": "Lee Kim"},
+                    },
+                    {
+                        "input": "acct-simon",
+                        "ok": True,
+                        "data": {"accountId": "acct-simon", "displayName": "Simon Wade"},
+                    },
+                ]
+            },
+        }
+    )
+    _install(monkeypatch, fake)
+
+    batch = await connector.fetch("work-item", "jira/acme/ENG-42")
+
+    people = {person.platform_user_id: person.display_name for person in batch.persons}
+    assert people["acct-simon"] == "Simon Wade"
+    assert people["acct-lee"] == "Lee Kim"
+    assert any(
+        edge.edge_type == "mentions" and edge.target_platform_user_id == "acct-lee"
+        for edge in batch.edges
+    )
+    assert "user bulk-lookup --account-id acct-lee --account-id acct-simon" in fake.commands()
+
+
+async def test_fetch_video_enriches_an_id_only_owner(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeTwg(
+        {
+            "loom get": TwgCommandError("transcript unsupported"),
+            "loom video get": video_payload(owner="acct-simon"),
+            "loom video comments": {"comments": []},
+            "user bulk-lookup": {
+                "items": [
+                    {
+                        "input": "acct-simon",
+                        "ok": True,
+                        "data": {"accountId": "acct-simon", "displayName": "Simon Wade"},
+                    }
+                ]
+            },
+        }
+    )
+    _install(monkeypatch, fake)
+
+    batch = await connector.fetch("video", "loom/abc123def456")
+
+    person = next(person for person in batch.persons if person.platform_user_id == "acct-simon")
+    assert person.display_name == "Simon Wade"
+    assert any(
+        edge.edge_type == "authored" and edge.source_platform_user_id == "acct-simon"
+        for edge in batch.edges
+    )
 
 
 async def test_page_space_lookup_is_cached(
@@ -704,11 +858,21 @@ def test_stored_full_hostnames_are_normalised_on_read(isolated_config: Path) -> 
 
 def test_stored_sites_that_are_not_atlassian_hosts_are_dropped(isolated_config: Path) -> None:
     """A config written before site references were validated must still load."""
-    (isolated_config / config.CONFIG_FILENAME).write_text(
-        json.dumps({"sites": ["hello.jira.atlassian.com", "hello"]}), encoding="utf-8"
-    )
+    path = isolated_config / config.CONFIG_FILENAME
+    path.write_text(json.dumps({"sites": ["hello.jira.atlassian.com", "hello"]}), encoding="utf-8")
 
     assert config.load_settings().sites == ["hello"]
+    # Persisted, or the drop is re-derived and re-warned on every load.
+    assert json.loads(path.read_text(encoding="utf-8"))["sites"] == ["hello"]
+
+
+def test_normalisation_is_not_written_back_when_nothing_changed(isolated_config: Path) -> None:
+    path = isolated_config / config.CONFIG_FILENAME
+    config.save_settings(config.TwgSettings(sites=["hello"]))
+    before = path.stat().st_mtime_ns
+
+    assert config.load_settings().sites == ["hello"]
+    assert path.stat().st_mtime_ns == before
 
 
 def test_remove_site_accepts_either_spelling() -> None:
