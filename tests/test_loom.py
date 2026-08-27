@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from conftest import video_payload
+from conftest import classify_atlassian_urls, video_payload
 
 from agentgraph_connector_twg import loom, urls
 
@@ -82,7 +82,21 @@ def test_video_maps_to_video_entity_with_transcript_content() -> None:
     assert video.source_created_at is not None
 
 
-def test_video_without_transcript_still_links_to_the_video() -> None:
+def test_video_uses_target_id_when_payload_id_is_an_ari(monkeypatch: pytest.MonkeyPatch) -> None:
+    classify_atlassian_urls(monkeypatch)
+    raw_ari = "ari:cloud:loom:cloud-1:video/activation/recording-1/abc123def456"
+
+    batch = loom.video_to_batch(video_payload(id=raw_ari), target=_target())
+
+    videos = [entity for entity in batch.entities if entity.entity_type == "Video"]
+    assert [(video.platform_entity_id, video.is_stub) for video in videos] == [
+        ("loom/abc123def456", False)
+    ]
+    assert videos[0].metadata["video_id"] == "abc123def456"
+    assert not any(edge.edge_type == "references" for edge in batch.edges)
+
+
+def test_video_without_transcript_keeps_its_watch_url_in_metadata() -> None:
     batch = loom.video_to_batch(video_payload(), target=_target())
 
     video = next(entity for entity in batch.entities if entity.entity_type == "Video")
@@ -90,7 +104,7 @@ def test_video_without_transcript_still_links_to_the_video() -> None:
     assert video.metadata["web_url"] == "https://www.loom.com/share/abc123def456"
     assert video.content is not None
     assert "Transcript" not in video.content
-    assert "https://www.loom.com/share/abc123def456" in video.content
+    assert "https://www.loom.com/share/abc123def456" not in video.content
 
 
 def test_preview_transcript_is_labelled_in_content() -> None:

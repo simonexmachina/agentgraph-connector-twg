@@ -110,7 +110,9 @@ def video_to_batch(
     comments: list[Any] | None = None,
 ) -> EntityBatch:
     """Build the Video entity, its owner, commenters, and space edge."""
-    video_id = pick_str(payload, "id", "videoId") or target.key or ""
+    # The observation target is the canonical Loom share ID. `twg loom get`
+    # can instead return an ARI in `id`, which must not become a new graph key.
+    video_id = target.key or pick_str(payload, "id", "videoId") or ""
     entity_id = urls.video_entity_id(video_id) if video_id else target.entity_id
     title = pick_str(payload, "name", "title") or f"Loom video {video_id}"
     description = flatten_rich_text(pick(payload, "description", "summary"))
@@ -135,7 +137,6 @@ def video_to_batch(
                 title,
                 description,
                 _transcript_section(transcript),
-                web_url,
             )
             if section
         ),
