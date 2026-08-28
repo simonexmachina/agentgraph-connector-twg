@@ -22,6 +22,8 @@ from agentgraph.connectors.base import ResourceType, SourceReference
 SOURCE: Final[str] = "twg"
 
 TargetKind = Literal["work-item", "page", "space", "project", "video"]
+TwgResourceType = ResourceType | Literal["work-item", "video"]
+"""Resource kinds emitted by this connector in addition to AgentGraph's base kinds."""
 
 _ISSUE_KEY = r"[A-Z][A-Z0-9_]+-\d+"
 
@@ -56,7 +58,7 @@ _WIKI_TINY_PATH = re.compile(r"^/wiki/x/(?P<tiny>[A-Za-z0-9_-]+)/?$")
 _LOOM_PATH = re.compile(r"^/(?:share|embed)/(?P<video_id>[A-Za-z0-9]+)/?$")
 _LOOM_HOSTS: Final[frozenset[str]] = frozenset({"loom.com", "www.loom.com"})
 
-_RESOURCE_TYPES: Final[dict[TargetKind, ResourceType]] = {
+_RESOURCE_TYPES: Final[dict[TargetKind, TwgResourceType]] = {
     "work-item": "work-item",
     "page": "document",
     "space": "folder",
@@ -78,7 +80,7 @@ class TwgTarget:
     web_url: str | None = None
 
     @property
-    def resource_type(self) -> ResourceType:
+    def resource_type(self) -> TwgResourceType:
         return _RESOURCE_TYPES[self.kind]
 
     def to_reference(self) -> SourceReference:
@@ -93,6 +95,8 @@ class TwgTarget:
         }
         return SourceReference(
             source=SOURCE,
+            # AgentGraph 0.6 accepts connector-defined resource kinds at runtime,
+            # although its public type alias does not yet declare these two values.
             resource_type=self.resource_type,
             resource_id=self.entity_id,
             fetch_meta=fetch_meta or None,

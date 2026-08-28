@@ -25,7 +25,6 @@ from agentgraph.connectors.base import (
     EntityRecord,
     FetchPolicy,
     PersonRecord,
-    ResourceType,
     ResourceUnavailableError,
     SourceReference,
 )
@@ -259,7 +258,7 @@ class TwgConnector(BaseConnector):
             return None
         return urls.parse_ari(ari, site=site)
 
-    def normalise_fetch_id(self, resource_id: str, entity_type: str) -> tuple[str, ResourceType]:
+    def normalise_fetch_id(self, resource_id: str, entity_type: str) -> tuple[str, urls.TwgResourceType]:
         target = urls.parse_entity_id(resource_id)
         if target is not None:
             return resource_id, target.resource_type
@@ -294,7 +293,7 @@ class TwgConnector(BaseConnector):
 
     async def fetch(
         self,
-        resource_type: ResourceType,
+        resource_type: urls.TwgResourceType,
         resource_id: str,
         meta: dict[str, str] | None = None,
         account_id: str | None = None,
@@ -367,7 +366,7 @@ class TwgConnector(BaseConnector):
     def _target(
         self,
         resource_id: str,
-        resource_type: ResourceType,
+        resource_type: urls.TwgResourceType,
         meta: Mapping[str, str] | None,
     ) -> urls.TwgTarget | None:
         _ = resource_type

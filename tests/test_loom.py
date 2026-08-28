@@ -8,6 +8,7 @@ import pytest
 from conftest import classify_atlassian_urls, video_payload
 
 from agentgraph_connector_twg import loom, urls
+from agentgraph_connector_twg.stubs import stub_for_url
 
 
 def _target() -> urls.TwgTarget:
@@ -80,6 +81,16 @@ def test_video_maps_to_video_entity_with_transcript_content() -> None:
     assert video.metadata["transcript_complete"] is True
     assert video.metadata["transcript_phrase_count"] == 1
     assert video.source_created_at is not None
+
+
+def test_video_url_creates_video_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    classify_atlassian_urls(monkeypatch)
+
+    stub = stub_for_url("https://www.loom.com/share/abc123def456")
+
+    assert stub is not None
+    assert stub.entity_type == "Video"
+    assert stub.platform_entity_id == "loom/abc123def456"
 
 
 def test_video_uses_target_id_when_payload_id_is_an_ari(monkeypatch: pytest.MonkeyPatch) -> None:

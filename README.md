@@ -1,4 +1,4 @@
-# agentgraph-connector-twg
+# atlassian-agentgraph-connector-twg
 
 An [AgentGraph](https://github.com/simonexmachina/agent-graph) connector for the Atlassian
 Teamwork Graph, built on the `twg` CLI.
@@ -19,18 +19,24 @@ This package is kept outside the AgentGraph repository because `twg` is internal
 
 ## Requirements
 
-- AgentGraph 0.6 or newer (it provides the `Task` and `Video` entity types this connector emits).
+- AgentGraph 0.6.1 through 0.6.x (it provides the `Task` and `Video` entity types this connector
+  emits).
 - The `twg` CLI, authenticated. The connector never authenticates on your behalf.
 
 ## Install
 
+Authenticate to the Atlassian package registry with your staff ID and an Artifactory Identity Token,
+then install through the internal PyPI virtual repository:
+
 ```bash
-uv pip install -e /path/to/agentgraph-connector-twg --no-deps
+uv pip install \
+  --index-url https://packages.atlassian.com/artifactory/api/pypi/pypi-internal/simple \
+  atlassian-agentgraph-connector-twg
 ```
 
-`--no-deps` keeps uv from re-resolving the AgentGraph packages already installed in the target
-environment. Re-run the command after `uv sync` in the AgentGraph repo, which can prune editable
-installs that are not workspace members.
+The `pypi-internal` virtual repository supplies both private Atlassian packages and approved public
+Python dependencies. The project distribution is named `atlassian-agentgraph-connector-twg`; its
+Python import package remains `agentgraph_connector_twg`.
 
 Confirm registration and configure your site:
 

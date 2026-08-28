@@ -1,0 +1,56 @@
+image: python:3.12
+
+definitions:
+  steps:
+    - step: &verify
+        name: Verify package
+        caches:
+          - pip
+        script:
+          - pipe: atlassian/artifactory-sidekick:v1
+          - source .artifactory/activate.sh
+          - export PIP_DISABLE_PIP_VERSION_CHECK=1
+          - export PIP_INDEX_URL="https://${ARTIFACTORY_USERNAME}:${ARTIFACTORY_PASSWORD}@packages.atlassian.com/artifactory/api/pypi/pypi-internal/simple"
+          - python -m pip install --upgrade pip
+          - python -m pip install '.[dev]' build twine
+          - python -m pytest -q
+          - python -m ruff check .
+          - python -m pyright
+          - python -m build
+          - python -m twine check dist/*
+          - python -m venv /tmp/package-smoke
+          - /tmp/package-smoke/bin/python -m pip install --index-url "$PIP_INDEX_URL" dist/*.whl
+          - /tmp/package-smoke/bin/agentgraph list-connectors
+
+pipelines:
+  pull-requests:
+    '**':
+      - step: *verify
+  branches:
+    main:
+      - step: *verify
+  tags:
+    'v*':
+      - step:
+          <<: *verify
+          name: Verify and publish package
+          script:
+            - pipe: atlassian/artifactory-sidekick:v1
+            - source .artifactory/activate.sh
+            - export PIP_DISABLE_PIP_VERSION_CHECK=1
+            - export PIP_INDEX_URL="https://${ARTIFACTORY_USERNAME}:${ARTIFACTORY_PASSWORD}@packages.atlassian.com/artifactory/api/pypi/pypi-internal/simple"
+            - PROJECT_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+            - test "$BITBUCKET_TAG" = "v$PROJECT_VERSION"
+            - python -m pip install --upgrade pip
+            - python -m pip install '.[dev]' build twine
+            - python -m pytest -q
+            - python -m ruff check .
+            - python -m pyright
+            - python -m build
+            - python -m twine check dist/*
+            - python -m venv /tmp/package-smoke
+            - /tmp/package-smoke/bin/python -m pip install --index-url "$PIP_INDEX_URL" dist/*.whl
+            - /tmp/package-smoke/bin/agentgraph list-connectors
+            - export TWINE_USERNAME="$ARTIFACTORY_USERNAME"
+            - export TWINE_PASSWORD="$ARTIFACTORY_PASSWORD"
+            - python -m twine upload --repository-url https://packages.atlassian.com/artifactory/api/pypi/pypi-private-local dist/*

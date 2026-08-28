@@ -10,8 +10,9 @@ import json
 import logging
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -122,8 +123,9 @@ def load_settings() -> TwgSettings:
         return TwgSettings()
     if not isinstance(raw, dict):
         return TwgSettings()
-    settings = TwgSettings.model_validate(raw)
-    _persist_normalised_sites(settings, raw.get("sites"))
+    raw_mapping = cast(Mapping[str, object], raw)
+    settings = TwgSettings.model_validate(raw_mapping)
+    _persist_normalised_sites(settings, raw_mapping.get("sites"))
     return settings
 
 
