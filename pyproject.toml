@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "atlassian-agentgraph-connector-twg"
-version = "0.1.1"
+version = "0.1.2"
 description = "Atlassian Teamwork Graph (twg) connector for AgentGraph"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -56,9 +56,7 @@ known-first-party = ["agentgraph_connector_twg"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 include = ["agentgraph_connector_twg", "tests"]
-# AgentGraph is an editable install, which pyright cannot follow, so its source
-# tree is added directly. Check the repositories out as siblings, or override
-# these paths locally.
-venvPath = "../agent-graph"
+venvPath = "."
 venv = ".venv"
-extraPaths = ["../agent-graph", ".", "tests"]
+extraPaths = [".", "tests"]
+reportMissingTypeStubs = false
