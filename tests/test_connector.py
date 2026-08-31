@@ -497,18 +497,6 @@ async def test_fetch_video_without_any_transcript_still_indexes_metadata(
     assert video.metadata["web_url"] == "https://www.loom.com/share/abc123def456"
 
 
-async def test_videos_can_be_disabled(
-    connector: twg_connector.TwgConnector,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config.save_settings(config.TwgSettings(include_videos=False))
-    _install(monkeypatch, _FakeTwg({}))
-
-    batch = await connector.fetch("video", "loom/abc123def456")
-
-    assert batch.entities == []
-
-
 async def test_fetch_rejects_foreign_identifiers(
     connector: twg_connector.TwgConnector,
 ) -> None:
@@ -682,7 +670,6 @@ async def test_ingest_sweeps_configured_jql_and_spaces(
             sites=["acme"],
             jql=["assignee = currentUser()"],
             spaces=["ENG"],
-            include_videos=False,
         )
     )
     fake = _FakeTwg(
@@ -716,7 +703,7 @@ async def test_ingest_sweeps_configured_jql_and_spaces(
     assert any(entity.platform_entity_id == "confluence/acme/884736" for entity in batch.entities)
     assert any(entity.platform_entity_id == "confluence/acme/space/ENG" for entity in batch.entities)
     assert any("--since 90d" in command for command in fake.commands())
-    assert not any("videos" in command for command in fake.commands())
+    assert any("--types jira,docs,videos" in command for command in fake.commands())
 
 
 # ----------------------------------------------------------------------
@@ -856,6 +843,15 @@ def test_stored_full_hostnames_are_normalised_on_read(isolated_config: Path) -> 
     assert config.load_settings().sites == ["hello"]
 
 
+def test_legacy_video_setting_is_ignored(isolated_config: Path) -> None:
+    (isolated_config / config.CONFIG_FILENAME).write_text(
+        json.dumps({"include_videos": False}),
+        encoding="utf-8",
+    )
+
+    assert config.load_settings().model_dump() == config.TwgSettings().model_dump()
+
+
 def test_stored_sites_that_are_not_atlassian_hosts_are_dropped(isolated_config: Path) -> None:
     """A config written before site references were validated must still load."""
     path = isolated_config / config.CONFIG_FILENAME
@@ -891,14 +887,6 @@ def test_space_keys_are_normalised_to_upper_case() -> None:
     assert config.load_settings().spaces == ["ENG"]
 
 
-def test_videos_command_toggles_indexing() -> None:
-    twg_connector.TwgConnector.run_cli_command(["videos", "off"])
-    assert config.load_settings().include_videos is False
-
-    twg_connector.TwgConnector.run_cli_command(["videos", "on"])
-    assert config.load_settings().include_videos is True
-
-
 def test_scope_additions_queue_an_ingest() -> None:
     effects = twg_connector.TwgConnector.command_effects(["add-jql", "x"], {})
     assert effects.ingest is True
@@ -910,7 +898,15 @@ def test_scope_additions_queue_an_ingest() -> None:
 
 @pytest.mark.parametrize(
     "args",
-    [[], ["bogus"], ["add-jql"], ["videos"], ["videos", "maybe"], ["add-site", "--flag"]],
+    [
+        [],
+        ["bogus"],
+        ["add-jql"],
+        ["videos"],
+        ["videos", "on"],
+        ["videos", "off"],
+        ["add-site", "--flag"],
+    ],
 )
 def test_invalid_commands_are_rejected(args: list[str]) -> None:
     with pytest.raises(ValueError):
@@ -920,7 +916,7 @@ def test_invalid_commands_are_rejected(args: list[str]) -> None:
 def test_cli_help_documents_every_command() -> None:
     help_text = twg_connector.TwgConnector.cli_help()
 
-    for command in ("status", "add-site", "add-jql", "add-space", "videos"):
+    for command in ("status", "add-site", "add-jql", "add-space"):
         assert command in help_text
     assert "twg auth refresh" in help_text
 

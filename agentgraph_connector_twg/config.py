@@ -90,9 +90,6 @@ class TwgSettings(BaseModel):
     spaces: list[str] = Field(default_factory=list)
     """Confluence space keys swept by `ingest()`."""
 
-    include_videos: bool = True
-    """Index Loom videos and their transcripts."""
-
     poll_item_limit: int = 50
     """Maximum resources hydrated per background poll."""
 

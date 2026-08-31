@@ -526,10 +526,6 @@ class TwgConnector(BaseConnector):
         video_id = target.key
         if video_id is None:
             raise ResourceUnavailableError(f"{target.entity_id} has no Loom video id")
-        if not settings.include_videos:
-            logger.debug("Skipping Loom video %s: videos are disabled", video_id)
-            return EntityBatch()
-
         payload, transcript = await self._video_with_transcript(video_id)
         if payload is None:
             raise ResourceUnavailableError(f"Loom video {video_id} returned no data")
@@ -653,9 +649,7 @@ class TwgConnector(BaseConnector):
         since: str,
     ) -> list[urls.TwgTarget]:
         """Return the user's own recently touched work items, pages, and videos."""
-        types = ["jira", "docs"]
-        if settings.include_videos:
-            types.append("videos")
+        types = ["jira", "docs", "videos"]
         try:
             envelope = await run_twg(
                 [
@@ -803,14 +797,6 @@ class TwgConnector(BaseConnector):
 
         if command == "status":
             return _status_result()
-        if command == "videos":
-            if not rest or rest[0] not in {"on", "off"}:
-                raise ValueError("Usage: agentgraph connector twg videos <on|off>")
-            settings = load_settings()
-            settings.include_videos = rest[0] == "on"
-            save_settings(settings)
-            return {"status": "ok", "source": cls.source, "include_videos": settings.include_videos}
-
         field = {
             "add-site": "sites",
             "remove-site": "sites",
@@ -822,7 +808,7 @@ class TwgConnector(BaseConnector):
         if field is None:
             raise ValueError(
                 f"Unknown twg connector command '{command}'. Available: status, add-site, "
-                "remove-site, add-jql, remove-jql, add-space, remove-space, videos"
+                "remove-site, add-jql, remove-jql, add-space, remove-space"
             )
         values = _parse_values(rest, command=command, field=field)
         if command.startswith("add-"):
@@ -850,7 +836,7 @@ class TwgConnector(BaseConnector):
         return ConnectorCommandEffects(
             ingest=command in {"add-jql", "add-space"},
             ingest_account_id=cls.source if command in {"add-jql", "add-space"} else None,
-            poll=command in {"add-site", "videos"},
+            poll=command == "add-site",
         )
 
     @classmethod
@@ -872,9 +858,6 @@ class TwgConnector(BaseConnector):
                 "      Manage JQL queries swept by ingest, then queue an ingest.",
                 "  add-space <KEY> / remove-space <KEY>",
                 "      Manage Confluence spaces swept by ingest, then queue an ingest.",
-                "  videos <on|off>",
-                "      Index Loom videos and their transcripts, or stop indexing them.",
-                "",
                 "Notes:",
                 "  Authentication belongs to the twg CLI. Run `twg auth refresh` in a terminal",
                 "  when the session expires; it needs write access to ~/.config/twg.",
@@ -894,9 +877,6 @@ class TwgConnector(BaseConnector):
                 lines.extend(f"  - {value}" for value in values)
             elif key in result:
                 lines.append(f"Nothing {key}.")
-        if "include_videos" in result:
-            state = "on" if result["include_videos"] else "off"
-            lines.append(f"Loom video indexing: {state}.")
         field = result.get("field")
         if isinstance(field, str):
             configured = as_sequence(result.get(field))
@@ -923,8 +903,7 @@ def _usage() -> str:
         "   or: agentgraph connector twg add-jql <jql>\n"
         "   or: agentgraph connector twg remove-jql <jql>\n"
         "   or: agentgraph connector twg add-space <SPACEKEY> [SPACEKEY...]\n"
-        "   or: agentgraph connector twg remove-space <SPACEKEY> [SPACEKEY...]\n"
-        "   or: agentgraph connector twg videos <on|off>"
+        "   or: agentgraph connector twg remove-space <SPACEKEY> [SPACEKEY...]"
     )
 
 
@@ -951,7 +930,6 @@ def _status_result() -> dict[str, Any]:
         "sites": settings.sites,
         "jql": settings.jql,
         "spaces": settings.spaces,
-        "include_videos": settings.include_videos,
         "config_path": str(config_path()),
     }
 
@@ -969,7 +947,6 @@ def _format_status(result: Mapping[str, Any]) -> str:
             f"sites:           {_join('sites')}",
             f"watched JQL:     {_join('jql')}",
             f"watched spaces:  {_join('spaces')}",
-            f"Loom videos:     {'on' if result.get('include_videos') else 'off'}",
             f"config:          {result.get('config_path')}",
         ]
     )

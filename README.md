@@ -78,7 +78,6 @@ managed through the CLI:
 | `agentgraph connector twg add-site <site>` / `remove-site` | Atlassian sites; the first is the default `--site` |
 | `agentgraph connector twg add-jql "<jql>"` / `remove-jql` | JQL swept by ingest, then queues an ingest |
 | `agentgraph connector twg add-space <KEY>` / `remove-space` | Confluence spaces swept by ingest, then queues an ingest |
-| `agentgraph connector twg videos <on\|off>` | Index Loom videos and transcripts |
 | `agentgraph connector twg status` | Binary, version, session, and configured scopes |
 
 `<site>` is the tenant name, and a site URL is accepted in its place. Both host spellings are
