@@ -564,6 +564,17 @@ async def test_poll_hydrates_recent_activity_across_types(
     assert any("--types jira,docs,videos" in command for command in fake.commands())
 
 
+def _since_value(fake: _FakeTwg) -> str:
+    for call in fake.calls:
+        if "--since" in call:
+            return call[call.index("--since") + 1]
+    raise AssertionError(f"no --since in {fake.commands()}")
+
+
+def _parse_since(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 async def test_poll_window_covers_the_gap_since_the_last_run(
     connector: twg_connector.TwgConnector,
     monkeypatch: pytest.MonkeyPatch,
@@ -574,7 +585,9 @@ async def test_poll_window_covers_the_gap_since_the_last_run(
 
     await connector.poll({"last_polled_at": last_polled_at})
 
-    assert any("--since 10h" in command for command in fake.commands())
+    # An hour of overlap either side of the last poll, so a 9h gap looks back 10h.
+    lookback = datetime.now(UTC) - _parse_since(_since_value(fake))
+    assert timedelta(hours=9, minutes=55) < lookback < timedelta(hours=10, minutes=5)
 
 
 async def test_poll_window_defaults_without_a_cursor(
@@ -586,7 +599,37 @@ async def test_poll_window_defaults_without_a_cursor(
 
     await connector.poll({})
 
-    assert any("--since 2h" in command for command in fake.commands())
+    since = _parse_since(_since_value(fake))
+    assert timedelta(minutes=85) < datetime.now(UTC) - since < timedelta(minutes=95)
+
+
+async def test_poll_window_clamps_a_long_outage_to_thirty_days(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeTwg({"work query": {"sections": {}}})
+    _install(monkeypatch, fake)
+    last_polled_at = (datetime.now(UTC) - timedelta(days=400)).isoformat()
+
+    await connector.poll({"last_polled_at": last_polled_at})
+
+    since = _parse_since(_since_value(fake))
+    assert datetime.now(UTC) - since < timedelta(days=30, minutes=5)
+
+
+async def test_poll_window_uses_a_since_format_twg_accepts(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`twg work query --since` rejects hour units — only dates, ISO datetimes, d/w/m."""
+    fake = _FakeTwg({"work query": {"sections": {}}})
+    _install(monkeypatch, fake)
+
+    await connector.poll({"last_polled_at": (datetime.now(UTC) - timedelta(hours=2)).isoformat()})
+
+    since = _since_value(fake)
+    assert not since.endswith("h")
+    assert _parse_since(since).tzinfo is not None
 
 
 async def test_poll_respects_the_item_limit_and_deduplicates(

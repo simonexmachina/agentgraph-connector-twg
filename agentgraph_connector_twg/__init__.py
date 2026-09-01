@@ -1010,15 +1010,22 @@ def _fetch_meta(target: urls.TwgTarget) -> dict[str, str]:
 
 
 def _poll_window(cursor: Mapping[str, Any]) -> str:
-    """Return a `--since` window covering everything since the last successful poll."""
+    """Return a `--since` window covering everything since the last successful poll.
+
+    Emitted as an absolute ISO timestamp: `twg work query --since` accepts
+    `YYYY-MM-DD`, an ISO datetime, or `7d`/`2w`/`1m` units, but not hours, so a
+    sub-day window can only be expressed as a datetime.
+    """
+    now = datetime.now(UTC)
+    cutoff = now - (_POLL_INTERVAL + timedelta(hours=1))
     last_polled_at = cursor.get("last_polled_at")
     if isinstance(last_polled_at, str):
         parsed = _parse_iso(last_polled_at)
         if parsed is not None:
-            elapsed = datetime.now(UTC) - parsed
-            hours = max(1, int(elapsed.total_seconds() // 3600) + 1)
-            return f"{min(hours, 24 * 30)}h"
-    return f"{int(_POLL_INTERVAL.total_seconds() // 3600) + 2}h"
+            # Overlap the previous poll by an hour so edits landing mid-poll
+            # are not skipped, and clamp long outages to 30 days.
+            cutoff = max(parsed - timedelta(hours=1), now - timedelta(days=30))
+    return cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _parse_iso(value: str) -> datetime | None:
