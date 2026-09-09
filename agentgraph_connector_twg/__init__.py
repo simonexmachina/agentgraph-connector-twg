@@ -1,9 +1,9 @@
 """Atlassian Teamwork Graph connector for AgentGraph.
 
-Jira work items become `Task` entities, Confluence pages become `Document`
-entities, and Loom videos become `Video` entities whose content is the
-transcript. Every upstream read goes through the `twg` CLI, which already holds
-the user's Atlassian session.
+Jira work items (including JPD ideas) and Atlas goals and projects become `Task`
+entities, Confluence pages become `Document` entities, and Loom videos become
+`Video` entities whose content is the transcript. Every upstream read goes
+through the `twg` CLI, which already holds the user's Atlassian session.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from agentgraph.connectors.base import (
     SourceReference,
 )
 
-from agentgraph_connector_twg import confluence, jira, loom, urls
+from agentgraph_connector_twg import atlas, confluence, jira, loom, urls
 from agentgraph_connector_twg.client import (
     TwgAuthError,
     TwgError,
@@ -87,11 +87,14 @@ class TwgConnector(BaseConnector):
         *urls.site_url_patterns("*"),
         "https://www.loom.com/share/*",
         "https://www.loom.com/embed/*",
+        "https://home.atlassian.com/o/*/s/*/goal/*",
+        "https://home.atlassian.com/o/*/s/*/project/*",
     ]
     auth_label = "twg"
     auth_description = (
-        "Atlassian Teamwork Graph via the twg CLI: Jira work items as Task entities, Confluence "
-        "pages as Documents, and Loom videos as Video entities with transcripts."
+        "Atlassian Teamwork Graph via the twg CLI: Jira work items and Atlas goals and projects "
+        "as Task entities, Confluence pages as Documents, and Loom videos as Video entities with "
+        "transcripts."
     )
     onboard_prompt = "Connect Atlassian Teamwork Graph (requires the twg CLI)?"
 
@@ -234,6 +237,10 @@ class TwgConnector(BaseConnector):
         Falling back to the any-tenant wildcards keeps observation working before
         any site is configured, but once one is, browsing an unrelated tenant (a
         customer's or partner's site) should not be observed.
+
+        Only the site-scoped wildcards are replaced. Loom and Atlas
+        (`home.atlassian.com`) are not served per site, so their patterns pass
+        through unchanged and Atlas observation is deliberately not narrowed.
         """
         sites = load_settings().sites
         if not sites:
@@ -314,6 +321,10 @@ class TwgConnector(BaseConnector):
             batch = self._project_batch(target)
         elif target.kind == "video":
             batch = await self._fetch_video(target, settings)
+        elif target.kind == "atlas-goal":
+            batch = await self._fetch_goal(target, settings)
+        elif target.kind == "atlas-project":
+            batch = await self._fetch_atlas_project(target, settings)
         else:
             raise ResourceUnavailableError(f"twg cannot fetch {resource_id}")
         return await self._enrich_people(batch, site=self._site(target, settings))
@@ -385,6 +396,7 @@ class TwgConnector(BaseConnector):
             key=target.key,
             space_key=space_key,
             web_url=web_url,
+            org_id=(meta or {}).get("org_id") or target.org_id,
         )
 
     def _site(self, target: urls.TwgTarget, settings: TwgSettings) -> str | None:
@@ -521,6 +533,54 @@ class TwgConnector(BaseConnector):
                 )
             ]
         )
+
+    async def _fetch_goal(self, target: urls.TwgTarget, settings: TwgSettings) -> EntityBatch:
+        payload = await self._atlas_payload(
+            target,
+            settings,
+            args=["goals", "get", "--include-description"],
+            label="goal",
+        )
+        return atlas.goal_to_batch(payload, target=target)
+
+    async def _fetch_atlas_project(
+        self,
+        target: urls.TwgTarget,
+        settings: TwgSettings,
+    ) -> EntityBatch:
+        payload = await self._atlas_payload(
+            target,
+            settings,
+            args=["projects", "get", "--include-description", "--include-linked-goals"],
+            label="project",
+        )
+        return atlas.project_to_batch(payload, target=target)
+
+    async def _atlas_payload(
+        self,
+        target: urls.TwgTarget,
+        settings: TwgSettings,
+        *,
+        args: list[str],
+        label: str,
+    ) -> Mapping[str, Any]:
+        """Run an Atlas `get` for one key.
+
+        Atlas is org-scoped, so the identifier carries the cloud id rather than a
+        site name — and `--site` accepts a bare cloud id, so it needs no lookup.
+        """
+        key = target.key
+        if key is None:
+            raise ResourceUnavailableError(f"{target.entity_id} has no Atlas {label} key")
+        command, subcommand, *options = args
+        envelope = await run_twg(
+            [command, subcommand, key, *options],
+            site=self._site(target, settings),
+        )
+        payload = _first_mapping(payload_data(envelope))
+        if payload is None:
+            raise ResourceUnavailableError(f"Atlas {label} {key} returned no data")
+        return payload
 
     async def _fetch_video(self, target: urls.TwgTarget, settings: TwgSettings) -> EntityBatch:
         video_id = target.key
@@ -1004,6 +1064,7 @@ def _fetch_meta(target: urls.TwgTarget) -> dict[str, str]:
             ("site", target.site),
             ("space_key", target.space_key),
             ("web_url", target.web_url),
+            ("org_id", target.org_id),
         )
         if value is not None
     }

@@ -6,15 +6,19 @@ from typing import Any
 
 import pytest
 from agentgraph.connectors.base import EntityRecord
-from conftest import classify_atlassian_urls, workitem_payload
+from conftest import classify_atlassian_urls, idea_payload, workitem_payload
 
 from agentgraph_connector_twg import jira, urls
 
 
-def _target() -> urls.TwgTarget:
-    target = urls.parse_url("https://acme.atlassian.net/browse/ENG-42")
+def _target(url: str = "https://acme.atlassian.net/browse/ENG-42") -> urls.TwgTarget:
+    target = urls.parse_url(url)
     assert target is not None
     return target
+
+
+def _idea_target() -> urls.TwgTarget:
+    return _target("https://acme.atlassian.net/browse/TIN-2284")
 
 
 def test_workitem_maps_to_task_entity() -> None:
@@ -214,6 +218,92 @@ def test_context_never_self_references(monkeypatch: pytest.MonkeyPatch) -> None:
     batch = jira.context_to_batch(payload, source_entity_id="jira/acme/ENG-42")
 
     assert batch.edges == []
+
+
+def test_idea_records_its_project_type() -> None:
+    batch = jira.workitem_to_batch(idea_payload(), target=_idea_target())
+
+    task = next(entity for entity in batch.entities if entity.entity_type == "Task")
+    assert task.metadata["project_type"] == "product_discovery"
+    assert task.metadata["is_idea"] is True
+    assert task.metadata["issue_type"] == "Idea"
+    assert task.metadata["issue_link_count"] == 2
+    assert task.content is not None
+    assert "Idea TIN-2284" in task.content
+
+
+def test_ordinary_workitem_is_not_an_idea() -> None:
+    batch = jira.workitem_to_batch(workitem_payload(), target=_target())
+
+    task = next(entity for entity in batch.entities if entity.entity_type == "Task")
+    assert task.metadata["is_idea"] is False
+    assert task.metadata["issue_link_count"] == 0
+    assert "project_type" not in task.metadata
+
+
+def test_idea_links_delivery_tickets_through_issue_links() -> None:
+    batch = jira.workitem_to_batch(idea_payload(), target=_idea_target())
+
+    stubs = {entity.platform_entity_id: entity for entity in batch.entities if entity.is_stub}
+    assert set(stubs) == {"jira/acme/SQA-4374", "jira/acme/TIN-585"}
+    assert all(stub.entity_type == "Task" for stub in stubs.values())
+
+    edges = {
+        (edge.source_platform_entity_id, edge.target_platform_entity_id): edge
+        for edge in batch.edges
+        if edge.edge_type == "references"
+    }
+    # The idea "is implemented by" SQA-4374, so the epic implements the idea.
+    delivery = edges[("jira/acme/SQA-4374", "jira/acme/TIN-2284")]
+    assert delivery.platform == "cross"
+    assert delivery.properties["relationship"] == "implements"
+
+    connected = edges[("jira/acme/TIN-2284", "jira/acme/TIN-585")]
+    assert connected.properties["relationship"] == "connects to"
+
+
+def test_issue_links_fall_back_to_the_link_type_name() -> None:
+    payload = idea_payload(
+        issuelinks=[{"type": {"name": "Mystery link"}, "outwardIssue": {"key": "TIN-9"}}]
+    )
+
+    batch = jira.workitem_to_batch(payload, target=_idea_target())
+
+    edge = next(edge for edge in batch.edges if edge.edge_type == "references")
+    assert edge.properties["relationship"] == "Mystery link"
+
+
+def test_issue_links_skip_self_links_and_duplicates() -> None:
+    payload = idea_payload(
+        issuelinks=[
+            {"type": {"outward": "relates to"}, "outwardIssue": {"key": "TIN-2284"}},
+            {"type": {"outward": "relates to"}, "outwardIssue": {"key": "TIN-9"}},
+            {"type": {"outward": "blocks"}, "inwardIssue": {"key": "TIN-9"}},
+            {"type": {"outward": "relates to"}},
+        ]
+    )
+
+    batch = jira.workitem_to_batch(payload, target=_idea_target())
+
+    assert [entity.platform_entity_id for entity in batch.entities if entity.is_stub] == [
+        "jira/acme/TIN-9"
+    ]
+
+
+def test_issue_links_are_truncated_at_the_cap() -> None:
+    payload = idea_payload(
+        issuelinks=[
+            {"type": {"outward": "relates to"}, "outwardIssue": {"key": f"TIN-{index}"}}
+            for index in range(jira.MAX_ISSUE_LINKS + 10)
+        ]
+    )
+
+    batch = jira.workitem_to_batch(payload, target=_idea_target())
+    task = next(entity for entity in batch.entities if entity.entity_type == "Task")
+
+    assert len([entity for entity in batch.entities if entity.is_stub]) == jira.MAX_ISSUE_LINKS
+    # The count reports every link, so the truncation is visible.
+    assert task.metadata["issue_link_count"] == jira.MAX_ISSUE_LINKS + 10
 
 
 def test_entity_records_are_valid_models() -> None:

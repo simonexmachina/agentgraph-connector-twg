@@ -6,14 +6,18 @@ Teamwork Graph, built on the `twg` CLI.
 | Resource | Entity | Content indexed |
 | --- | --- | --- |
 | Jira work item | `Task` | Summary, description, comments, status, assignee, labels |
+| JPD idea | `Task` | As a Jira work item, plus its delivery-ticket links |
 | Jira project | `Folder` | Container for its work items |
 | Confluence page | `Document` | Heading outline plus the page body as markdown |
 | Confluence space | `Folder` | Container for its pages |
+| Atlas goal | `Task` | Name, description, status, owner, target date, latest update |
+| Atlas project | `Task` | The same, plus its linked goals |
 | Loom video | `Video` | Title, description, and the **transcript**; `metadata.web_url` is the watch link |
 
 People become `Person` entities from reporters, assignees, commenters, authors, editors, video
-owners, and `@` mentions. Relationships from `twg context jira workitem` become `references` edges,
-with stub entities for linked resources that have not been fetched yet.
+owners, Atlas owners and update authors, and `@` mentions. Relationships from
+`twg context jira workitem`, Jira issue links, and Atlas goal/project links become `references`
+edges, with stub entities for linked resources that have not been fetched yet.
 
 This package is kept outside the AgentGraph repository because `twg` is internal Atlassian tooling.
 
@@ -21,7 +25,9 @@ This package is kept outside the AgentGraph repository because `twg` is internal
 
 - AgentGraph 0.6.1 through 0.6.x (it provides the `Task` and `Video` entity types this connector
   emits).
-- The `twg` CLI, authenticated. The connector never authenticates on your behalf.
+- The `twg` CLI, authenticated. The connector never authenticates on your behalf. It reads through
+  `twg jira`, `twg confluence`, `twg loom`, `twg context`, and — for Atlas — `twg goals get` and
+  `twg projects get`.
 
 ## Install
 
@@ -94,6 +100,11 @@ site `hello`, and browsing either host is observed. Anything else is rejected ra
   skipping anything fetched within the last 15 minutes.
 - **Ingest:** the same sweep over `ingest_since` (default 90 days), plus every configured JQL query
   and Confluence space.
+- **Atlas goals and projects** are indexed on observation or an explicit `agentgraph fetch` only.
+  They are not part of the poll or the ingest sweep, and there is nothing to configure for them:
+  `home.atlassian.com/o/<orgId>/s/<cloudId>/(goal|project)/<KEY>` carries everything a fetch needs.
+  Because that host is not site-scoped, Atlas observation is not narrowed to the configured sites.
+- **JPD ideas** are Jira work items, so they ride the Jira paths above with no extra configuration.
 
 Only your own activity and explicitly configured scopes are indexed.
 

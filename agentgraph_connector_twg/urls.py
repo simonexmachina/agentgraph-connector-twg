@@ -3,11 +3,17 @@
 Identifiers are site-qualified so a tenant with several Atlassian sites cannot
 collide:
 
-    jira/<site>/<KEY>                 -> Task
-    jira/<site>/project/<KEY>         -> Folder
-    confluence/<site>/<pageId>        -> Document
-    confluence/<site>/space/<KEY>     -> Folder
-    loom/<videoId>                    -> Video
+    jira/<site>/<KEY>                        -> Task
+    jira/<site>/project/<KEY>                -> Folder
+    confluence/<site>/<pageId>               -> Document
+    confluence/<site>/space/<KEY>            -> Folder
+    loom/<videoId>                           -> Video
+    atlas/<orgId>/<cloudId>/goal/<KEY>       -> Task
+    atlas/<orgId>/<cloudId>/project/<KEY>    -> Task
+
+Atlas (Atlassian Home) is org-scoped rather than site-scoped, so its
+identifiers carry both the org and the cloud id from the URL. That keeps them
+lossless: `entity_url()` rebuilds the browse URL with no cache and no config.
 """
 
 from __future__ import annotations
@@ -21,7 +27,15 @@ from agentgraph.connectors.base import ResourceType, SourceReference
 
 SOURCE: Final[str] = "twg"
 
-TargetKind = Literal["work-item", "page", "space", "project", "video"]
+TargetKind = Literal[
+    "work-item",
+    "page",
+    "space",
+    "project",
+    "video",
+    "atlas-goal",
+    "atlas-project",
+]
 TwgResourceType = ResourceType | Literal["work-item", "video"]
 """Resource kinds emitted by this connector in addition to AgentGraph's base kinds."""
 
@@ -48,7 +62,8 @@ _SITE_HOST = re.compile(
 
 _BROWSE_PATH = re.compile(rf"^/browse/(?P<key>{_ISSUE_KEY})/?$", re.IGNORECASE)
 _JIRA_PROJECT_PATH = re.compile(
-    r"^/jira/(?:software|core|servicedesk)(?:/c)?/projects/(?P<project>[A-Za-z0-9_]+)(?:/.*)?$"
+    r"^/jira/(?:software|core|servicedesk|polaris|product-discovery|discovery)"
+    r"(?:/c)?/projects/(?P<project>[A-Za-z0-9_]+)(?:/.*)?$"
 )
 _WIKI_PAGE_PATH = re.compile(
     r"^/wiki/spaces/(?P<space>[^/]+)/(?:pages|blog)/(?P<page_id>\d+)(?:/.*)?$"
@@ -58,12 +73,26 @@ _WIKI_TINY_PATH = re.compile(r"^/wiki/x/(?P<tiny>[A-Za-z0-9_-]+)/?$")
 _LOOM_PATH = re.compile(r"^/(?:share|embed)/(?P<video_id>[A-Za-z0-9]+)/?$")
 _LOOM_HOSTS: Final[frozenset[str]] = frozenset({"loom.com", "www.loom.com"})
 
+_ATLAS_HOST: Final[str] = "home.atlassian.com"
+# Atlas keys share the Jira key shape. Trailing segments (`/updates`, `/about`)
+# are absorbed, but the `/o/<org>/project/<KEY>` form that `twg`'s own help text
+# shows is deliberately not matched: without a cloud id it cannot produce the
+# same identifier, so accepting it would give one resource two graph keys.
+_ATLAS_PATH = re.compile(
+    rf"^/o/(?P<org>[0-9a-f-]+)/s/(?P<cloud>[0-9a-f-]+)/(?P<kind>project|goal)/(?P<key>{_ISSUE_KEY})(?:/.*)?$",
+    re.IGNORECASE,
+)
+
 _RESOURCE_TYPES: Final[dict[TargetKind, TwgResourceType]] = {
     "work-item": "work-item",
     "page": "document",
     "space": "folder",
     "project": "folder",
     "video": "video",
+    # Atlas goals and projects are units of work, so they reuse the work-item
+    # resource type and become Task entities.
+    "atlas-goal": "work-item",
+    "atlas-project": "work-item",
 }
 
 
@@ -74,10 +103,13 @@ class TwgTarget:
     kind: TargetKind
     entity_id: str
     site: str | None = None
+    """Site name, or — for Atlas — the cloud id, which `--site` also accepts."""
     key: str | None = None
-    """Issue key, page id, space key, project key, or video id."""
+    """Issue key, page id, space key, project key, video id, or Atlas key."""
     space_key: str | None = None
     web_url: str | None = None
+    org_id: str | None = None
+    """Atlassian org id, carried only by Atlas targets."""
 
     @property
     def resource_type(self) -> TwgResourceType:
@@ -90,6 +122,7 @@ class TwgTarget:
                 ("site", self.site),
                 ("space_key", self.space_key),
                 ("web_url", self.web_url),
+                ("org_id", self.org_id),
             )
             if value is not None
         }
@@ -123,6 +156,14 @@ def video_entity_id(video_id: str) -> str:
     return f"loom/{video_id}"
 
 
+def goal_entity_id(org_id: str, cloud_id: str, key: str) -> str:
+    return f"atlas/{org_id}/{cloud_id}/goal/{key.upper()}"
+
+
+def atlas_project_entity_id(org_id: str, cloud_id: str, key: str) -> str:
+    return f"atlas/{org_id}/{cloud_id}/project/{key.upper()}"
+
+
 def workitem_web_url(site: str, key: str) -> str:
     return f"https://{site}.atlassian.net/browse/{key.upper()}"
 
@@ -143,6 +184,14 @@ def space_web_url(site: str, space_key: str) -> str:
 
 def video_web_url(video_id: str) -> str:
     return f"https://www.loom.com/share/{video_id}"
+
+
+def goal_web_url(org_id: str, cloud_id: str, key: str) -> str:
+    return f"https://{_ATLAS_HOST}/o/{org_id}/s/{cloud_id}/goal/{key.upper()}"
+
+
+def atlas_project_web_url(org_id: str, cloud_id: str, key: str) -> str:
+    return f"https://{_ATLAS_HOST}/o/{org_id}/s/{cloud_id}/project/{key.upper()}"
 
 
 def parse_url(url: str) -> TwgTarget | None:
@@ -167,6 +216,17 @@ def parse_url(url: str) -> TwgTarget | None:
             entity_id=video_entity_id(video_id),
             key=video_id,
             web_url=video_web_url(video_id),
+        )
+
+    if host == _ATLAS_HOST:
+        atlas_match = _ATLAS_PATH.match(parsed.path)
+        if atlas_match is None:
+            return None
+        return _atlas_target(
+            atlas_match.group("org"),
+            atlas_match.group("cloud"),
+            atlas_match.group("kind").lower(),
+            atlas_match.group("key"),
         )
 
     site_match = _SITE_HOST.match(host)
@@ -250,6 +310,8 @@ def parse_entity_id(entity_id: str) -> TwgTarget | None:
             key=parts[1],
             web_url=video_web_url(parts[1]),
         )
+    if parts[0] == "atlas" and len(parts) == 5 and parts[3] in {"goal", "project"}:
+        return _atlas_target(parts[1], parts[2], parts[3], parts[4])
     if parts[0] == "jira" and len(parts) == 3:
         return _workitem_target(parts[1], parts[2])
     if parts[0] == "jira" and len(parts) == 4 and parts[2] == "project":
@@ -286,6 +348,10 @@ def parse_ari(ari: str, *, site: str | None = None) -> TwgTarget | None:
     `twg resolve` and the context commands return ARIs such as
     `ari:cloud:confluence:<cloudId>:page/12345` or
     `ari:cloud:jira:<cloudId>:issue/PROJ-1`.
+
+    Atlas is deliberately absent: `ari:cloud:townsquare:<cloudId>:goal/<uuid>`
+    identifies the goal by UUID, and `twg goals get` only accepts the
+    `ATLAS-nnnnnn` key, so such an ARI is not fetchable.
     """
     if not ari.startswith("ari:"):
         return None
@@ -362,6 +428,27 @@ def _workitem_target(site: str, key: str) -> TwgTarget:
         site=site,
         key=key,
         web_url=workitem_web_url(site, key),
+    )
+
+
+def _atlas_target(org_id: str, cloud_id: str, kind: str, key: str) -> TwgTarget:
+    key = key.upper()
+    if kind == "goal":
+        return TwgTarget(
+            kind="atlas-goal",
+            entity_id=goal_entity_id(org_id, cloud_id, key),
+            site=cloud_id,
+            key=key,
+            web_url=goal_web_url(org_id, cloud_id, key),
+            org_id=org_id,
+        )
+    return TwgTarget(
+        kind="atlas-project",
+        entity_id=atlas_project_entity_id(org_id, cloud_id, key),
+        site=cloud_id,
+        key=key,
+        web_url=atlas_project_web_url(org_id, cloud_id, key),
+        org_id=org_id,
     )
 
 

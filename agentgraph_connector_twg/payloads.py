@@ -8,6 +8,7 @@ rather than raising, which keeps mapping code linear and upgrade-tolerant.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -114,6 +115,25 @@ def flatten_rich_text(value: Any) -> str:
     blocks: list[str] = []
     _walk_adf(value, blocks)
     return "\n\n".join(block for block in (block.strip() for block in blocks) if block)
+
+
+def flatten_encoded_rich_text(value: Any) -> str:
+    """Flatten rich text that may arrive as a JSON-encoded ADF document string.
+
+    Atlas status updates carry their summary either as plain text or as a
+    serialised ADF document, so a string that looks like JSON is decoded before
+    flattening and falls back to itself when it turns out not to be.
+    """
+    if not isinstance(value, str):
+        return flatten_rich_text(value)
+    text = value.strip()
+    if not text.startswith(("{", "[")):
+        return text
+    try:
+        decoded: Any = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    return flatten_rich_text(decoded)
 
 
 _BLOCK_TYPES = frozenset(

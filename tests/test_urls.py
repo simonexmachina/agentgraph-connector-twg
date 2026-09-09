@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from conftest import ATLAS_CLOUD_ID as CLOUD
+from conftest import ATLAS_ORG_ID as ORG
 
 from agentgraph_connector_twg import urls
+
+_ATLAS_PREFIX = f"https://home.atlassian.com/o/{ORG}/s/{CLOUD}"
 
 
 @pytest.mark.parametrize(
@@ -61,6 +65,16 @@ from agentgraph_connector_twg import urls
             "confluence/acme/884736",
         ),
         (
+            "https://acme.atlassian.net/jira/polaris/projects/TIN/ideas/view/12345",
+            "project",
+            "jira/acme/project/TIN",
+        ),
+        (
+            "https://acme.atlassian.net/jira/polaris/projects/TIN/ideas/view/1?selectedIssue=TIN-42",
+            "work-item",
+            "jira/acme/TIN-42",
+        ),
+        (
             "https://www.loom.com/share/abc123def456",
             "video",
             "loom/abc123def456",
@@ -69,6 +83,26 @@ from agentgraph_connector_twg import urls
             "https://loom.com/embed/abc123def456?sid=1",
             "video",
             "loom/abc123def456",
+        ),
+        (
+            f"{_ATLAS_PREFIX}/goal/ATLAS-131327",
+            "atlas-goal",
+            f"atlas/{ORG}/{CLOUD}/goal/ATLAS-131327",
+        ),
+        (
+            f"{_ATLAS_PREFIX}/goal/ATLAS-131327/updates/5e17f76c",
+            "atlas-goal",
+            f"atlas/{ORG}/{CLOUD}/goal/ATLAS-131327",
+        ),
+        (
+            f"{_ATLAS_PREFIX}/project/ATLAS-133324",
+            "atlas-project",
+            f"atlas/{ORG}/{CLOUD}/project/ATLAS-133324",
+        ),
+        (
+            f"{_ATLAS_PREFIX}/project/ATLAS-133324/about",
+            "atlas-project",
+            f"atlas/{ORG}/{CLOUD}/project/ATLAS-133324",
         ),
     ],
 )
@@ -90,6 +124,11 @@ def test_parse_url_identifies_supported_resources(url: str, kind: str, entity_id
         "https://acme.atlassian.net/browse/not-an-issue",
         "https://www.loom.com/looks/abc123",
         "ftp://acme.atlassian.net/browse/ENG-42",
+        # No cloud id, so it cannot produce the same identifier as the `/s/` form.
+        f"https://home.atlassian.com/o/{ORG}/project/ATLAS-133324",
+        f"https://home.atlassian.com/o/{ORG}/s/{CLOUD}/goal/not-a-key",
+        f"https://home.atlassian.com/o/{ORG}/s/{CLOUD}/team/ATLAS-1",
+        "https://home.atlassian.com/",
     ],
 )
 def test_parse_url_rejects_unowned_urls(url: str) -> None:
@@ -142,6 +181,8 @@ def test_tiny_wiki_links_are_recognised_but_not_decoded() -> None:
         "confluence/acme/884736",
         "confluence/acme/space/ENG",
         "loom/abc123def456",
+        f"atlas/{ORG}/{CLOUD}/goal/ATLAS-131327",
+        f"atlas/{ORG}/{CLOUD}/project/ATLAS-133324",
     ],
 )
 def test_entity_ids_round_trip(entity_id: str) -> None:
@@ -150,6 +191,24 @@ def test_entity_ids_round_trip(entity_id: str) -> None:
     assert target is not None
     assert target.entity_id == entity_id
     assert target.web_url is not None
+    assert urls.parse_url(target.web_url) == target
+
+
+def test_atlas_targets_carry_the_org_and_cloud_id() -> None:
+    target = urls.parse_url(f"{_ATLAS_PREFIX}/goal/ATLAS-131327")
+
+    assert target is not None
+    assert target.org_id == ORG
+    # Atlas has no site name; `--site` takes the cloud id instead.
+    assert target.site == CLOUD
+    assert target.key == "ATLAS-131327"
+    reference = target.to_reference()
+    assert reference.resource_type == "work-item"
+    assert reference.fetch_meta == {
+        "site": CLOUD,
+        "web_url": f"{_ATLAS_PREFIX}/goal/ATLAS-131327",
+        "org_id": ORG,
+    }
 
 
 def test_parse_entity_id_rejects_foreign_ids() -> None:

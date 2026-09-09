@@ -10,8 +10,13 @@ from typing import Any
 
 import pytest
 from agentgraph.connectors.base import EntityBatch, ResourceUnavailableError
+from conftest import ATLAS_CLOUD_ID as CLOUD
+from conftest import ATLAS_ORG_ID as ORG
 from conftest import (
+    atlas_project_payload,
+    atlas_url,
     classify_atlassian_urls,
+    goal_payload,
     page_payload,
     video_payload,
     workitem_payload,
@@ -28,6 +33,7 @@ class _FakeTwg:
     def __init__(self, responses: dict[str, Any]) -> None:
         self.responses = responses
         self.calls: list[list[str]] = []
+        self.sites: list[str | None] = []
 
     async def __call__(
         self,
@@ -37,9 +43,10 @@ class _FakeTwg:
         timeout: float = 45.0,
         json_output: bool = True,
     ) -> dict[str, Any]:
-        _ = (site, timeout, json_output)
+        _ = (timeout, json_output)
         argv = list(args)
         self.calls.append(argv)
+        self.sites.append(site)
         for prefix, response in self.responses.items():
             if " ".join(argv).startswith(prefix):
                 if isinstance(response, Exception):
@@ -495,6 +502,75 @@ async def test_fetch_video_without_any_transcript_still_indexes_metadata(
     video = next(entity for entity in batch.entities if entity.entity_type == "Video")
     assert video.metadata["transcript_available"] is False
     assert video.metadata["web_url"] == "https://www.loom.com/share/abc123def456"
+
+
+async def test_fetch_goal_asks_for_the_description_on_the_atlas_cloud_id(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeTwg({"goals get": goal_payload()})
+    _install(monkeypatch, fake)
+
+    batch = await connector.fetch("work-item", f"atlas/{ORG}/{CLOUD}/goal/ATLAS-131327")
+
+    task = next(entity for entity in batch.entities if not entity.is_stub)
+    assert task.entity_type == "Task"
+    assert task.metadata["kind"] == "goal"
+    assert task.metadata["web_url"] == atlas_url("goal", "ATLAS-131327")
+    assert fake.commands() == ["goals get ATLAS-131327 --include-description"]
+    # Atlas is org-scoped, so `--site` carries the cloud id from the identifier.
+    assert fake.sites == [CLOUD]
+
+
+async def test_fetch_atlas_project_includes_linked_goals(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeTwg({"projects get": atlas_project_payload()})
+    _install(monkeypatch, fake)
+
+    batch = await connector.fetch("work-item", f"atlas/{ORG}/{CLOUD}/project/ATLAS-133324")
+
+    assert fake.commands() == [
+        "projects get ATLAS-133324 --include-description --include-linked-goals"
+    ]
+    assert fake.sites == [CLOUD]
+    assert any(
+        entity.is_stub and entity.platform_entity_id == f"atlas/{ORG}/{CLOUD}/goal/ATLAS-131327"
+        for entity in batch.entities
+    )
+
+
+async def test_fetch_atlas_raises_when_no_data(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install(monkeypatch, _FakeTwg({"goals get": None}))
+
+    with pytest.raises(ResourceUnavailableError):
+        await connector.fetch("work-item", f"atlas/{ORG}/{CLOUD}/goal/ATLAS-131327")
+
+
+def test_entity_url_round_trips_atlas_identifiers(
+    connector: twg_connector.TwgConnector,
+) -> None:
+    for kind, key in (("goal", "ATLAS-131327"), ("project", "ATLAS-133324")):
+        entity_id = f"atlas/{ORG}/{CLOUD}/{kind}/{key}"
+        assert connector.entity_url(entity_id) == atlas_url(kind, key)
+        assert connector.resolve_url(atlas_url(kind, key)) is not None
+        assert connector.normalise_fetch_id(entity_id, "Task") == (entity_id, "work-item")
+
+
+async def test_observation_patterns_keep_the_atlas_host(
+    connector: twg_connector.TwgConnector,
+) -> None:
+    """`home.atlassian.com` is not site-scoped, so it is never narrowed."""
+    config.save_settings(config.TwgSettings(sites=["acme"]))
+
+    patterns = await connector.observation_url_patterns()
+
+    assert "https://home.atlassian.com/o/*/s/*/goal/*" in patterns
+    assert "https://home.atlassian.com/o/*/s/*/project/*" in patterns
 
 
 async def test_fetch_rejects_foreign_identifiers(

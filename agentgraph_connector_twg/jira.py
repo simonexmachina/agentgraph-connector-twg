@@ -33,6 +33,9 @@ from agentgraph_connector_twg.stubs import stub_for_url
 MAX_COMMENTS = 50
 """Comments rendered into content; older ones are summarised by a trailing count."""
 
+MAX_ISSUE_LINKS = 50
+"""Issue links turned into edges; `metadata.issue_link_count` reports the true total."""
+
 
 def workitem_to_batch(payload: Mapping[str, Any], *, target: urls.TwgTarget) -> EntityBatch:
     """Build the Task entity, its project Folder, people, and edges for one work item."""
@@ -44,6 +47,7 @@ def workitem_to_batch(payload: Mapping[str, Any], *, target: urls.TwgTarget) -> 
     summary = pick_str(payload, "summary") or pick_str(fields, "summary") or key
     description = flatten_rich_text(pick(payload, "description") or pick(fields, "description"))
     comments = _comments(payload, fields)
+    issue_links = _issue_links(payload, fields, site=site, entity_id=entity_id)
     web_url = (
         pick_str(payload, "url", "webUrl")
         or target.web_url
@@ -82,9 +86,14 @@ def workitem_to_batch(payload: Mapping[str, Any], *, target: urls.TwgTarget) -> 
             key=key,
             web_url=web_url,
             comment_count=len(comments),
+            issue_link_count=_issue_link_count(payload, fields),
         ),
     )
     batch.entities.append(entity)
+
+    for stub, edge in issue_links:
+        batch.entities.append(stub)
+        edges.append(edge)
 
     project_key = _project_key(payload, fields, key)
     if site and project_key:
@@ -215,6 +224,74 @@ def context_to_batch(
     return batch
 
 
+def _raw_issue_links(payload: Mapping[str, Any], fields: Mapping[str, Any]) -> list[Any]:
+    return as_sequence(pick(payload, "issuelinks", "issueLinks") or pick(fields, "issuelinks"))
+
+
+def _issue_link_count(payload: Mapping[str, Any], fields: Mapping[str, Any]) -> int:
+    return len(_raw_issue_links(payload, fields))
+
+
+def _issue_links(
+    payload: Mapping[str, Any],
+    fields: Mapping[str, Any],
+    *,
+    site: str,
+    entity_id: str,
+) -> list[tuple[EntityRecord, EdgeRecord]]:
+    """Turn Jira `issuelinks` into stubs and `references` edges.
+
+    `twg context jira workitem` does not report issue links, so this is the only
+    place a JPD idea's delivery tickets ("Polaris work item link") reach the
+    graph. Each entry names the *other* issue: an `inwardIssue` sits on the
+    inward side of the link, so the edge runs from it to this work item, while an
+    `outwardIssue` runs the other way. The relationship is always the link type's
+    outward phrase, which then reads correctly along the edge — an idea linked to
+    its epic becomes `epic implements idea`.
+
+    Stubs are built directly rather than through `stubs.stub_for_url`: the target
+    is always a Jira issue on this site, so the identifier is already ours and the
+    connector-registry round trip would only cost time.
+    """
+    links: list[tuple[EntityRecord, EdgeRecord]] = []
+    if not site:
+        return links
+    seen: set[str] = {entity_id}
+    for item in _raw_issue_links(payload, fields)[:MAX_ISSUE_LINKS]:
+        link = as_mapping(item)
+        if link is None:
+            continue
+        inward = pick_str(pick_mapping(link, "inwardIssue"), "key")
+        outward = pick_str(pick_mapping(link, "outwardIssue"), "key")
+        other = inward or outward
+        if other is None:
+            continue
+        other_id = urls.workitem_entity_id(site, other)
+        if other_id in seen:
+            continue
+        seen.add(other_id)
+        link_type = pick_mapping(link, "type")
+        relationship = pick_str(link_type, "outward", "inward", "name") or "relates to"
+        links.append(
+            (
+                EntityRecord(
+                    entity_type="Task",
+                    platform=urls.SOURCE,
+                    platform_entity_id=other_id,
+                    is_stub=True,
+                ),
+                EdgeRecord(
+                    edge_type="references",
+                    source_platform_entity_id=other_id if inward else entity_id,
+                    target_platform_entity_id=entity_id if inward else other_id,
+                    platform="cross",
+                    properties={"relationship": relationship},
+                ),
+            )
+        )
+    return links
+
+
 class _Comment:
     __slots__ = ("author", "body", "created", "raw_body")
 
@@ -295,6 +372,12 @@ def _project_name(payload: Mapping[str, Any], fields: Mapping[str, Any]) -> str 
     return nested_str(payload, ("project", "name")) or nested_str(fields, ("project", "name"))
 
 
+def _project_type(payload: Mapping[str, Any], fields: Mapping[str, Any]) -> str | None:
+    return nested_str(payload, ("project", "projectTypeKey")) or nested_str(
+        fields, ("project", "projectTypeKey")
+    )
+
+
 def _content(
     *,
     key: str,
@@ -342,8 +425,10 @@ def _metadata(
     key: str,
     web_url: str | None,
     comment_count: int,
+    issue_link_count: int,
 ) -> dict[str, MetadataValue]:
     labels = as_sequence(pick(payload, "labels") or pick(fields, "labels"))
+    project_type = _project_type(payload, fields)
     return clean_metadata(
         {
             "site": site,
@@ -360,6 +445,10 @@ def _metadata(
             "resolution": nested_str(payload, ("resolution", "name")) or nested_str(fields, ("resolution", "name")),
             "project_key": _project_key(payload, fields, key),
             "project_name": _project_name(payload, fields),
+            "project_type": project_type,
+            # A JPD idea is an ordinary Jira issue in a `product_discovery`
+            # project, and nothing else in the payload says so.
+            "is_idea": project_type == "product_discovery",
             "assignee": nested_str(payload, ("assignee", "displayName"))
             or nested_str(fields, ("assignee", "displayName")),
             "reporter": nested_str(payload, ("reporter", "displayName"))
@@ -367,6 +456,7 @@ def _metadata(
             "labels": labels,
             "due_date": pick_str(payload, "duedate", "dueDate") or pick_str(fields, "duedate"),
             "comment_count": comment_count,
+            "issue_link_count": issue_link_count,
             "vote_count": pick_int(payload, "votes") or pick_int(fields, "votes"),
         }
     )
