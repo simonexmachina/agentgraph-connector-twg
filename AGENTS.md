@@ -23,7 +23,7 @@ that shape when handling a new field.
 
 ## Entity Types
 
-This connector targets AgentGraph 0.6.1 through 0.6.x (`pyproject.toml`), which is what provides
+This connector targets AgentGraph 0.7.0 through 0.7.x (`pyproject.toml`), which is what provides
 the `Task` and `Video` entity types it emits. Do not emit an entity type outside that release's
 vocabulary.
 

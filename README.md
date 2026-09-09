@@ -23,7 +23,7 @@ This package is kept outside the AgentGraph repository because `twg` is internal
 
 ## Requirements
 
-- AgentGraph 0.6.1 through 0.6.x (it provides the `Task` and `Video` entity types this connector
+- AgentGraph 0.7.0 through 0.7.x (it provides the `Task` and `Video` entity types this connector
   emits).
 - The `twg` CLI, authenticated. The connector never authenticates on your behalf. It reads through
   `twg jira`, `twg confluence`, `twg loom`, `twg context`, and — for Atlas — `twg goals get` and

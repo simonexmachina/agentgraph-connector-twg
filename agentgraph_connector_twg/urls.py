@@ -128,7 +128,7 @@ class TwgTarget:
         }
         return SourceReference(
             source=SOURCE,
-            # AgentGraph 0.6 accepts connector-defined resource kinds at runtime,
+            # AgentGraph 0.7 accepts connector-defined resource kinds at runtime,
             # although its public type alias does not yet declare these two values.
             resource_type=self.resource_type,
             resource_id=self.entity_id,
