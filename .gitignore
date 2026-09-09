@@ -5,3 +5,10 @@ __pycache__/
 .venv/
 dist/
 build/
+
+# Local agent instructions (personal, not shared)
+AGENTS.local.md
+CLAUDE.local.md
+
+# Local Claude settings (personal permissions, not shared)
+.claude/settings.local.json

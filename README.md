@@ -117,7 +117,16 @@ work data; choose your polled scopes deliberately.
 ## Development
 
 ```bash
-uv run --with pytest --with pytest-asyncio pytest -q
+uv sync
+```
+
+That installs the `dev` dependency group and resolves AgentGraph from `pypi-internal` per
+`uv.lock`. Run the same gates CI does (`bitbucket-pipelines.yml`):
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python -m ruff check .
+.venv/bin/python -m pyright
 ```
 
 Tests never invoke the real `twg`: the subprocess layer is patched and payload fixtures live in
@@ -125,3 +134,23 @@ Tests never invoke the real `twg`: the subprocess layer is patched and payload f
 `twg help describe "<command>"`. Re-record them from live output when a `twg` upgrade changes a
 payload, and keep parsing tolerant — `payloads.py` reads the documented field first and falls back
 to known aliases.
+
+### Against a local AgentGraph checkout
+
+To develop this connector against an unreleased AgentGraph — a new entity type or a change to
+`BaseConnector` — install that checkout editable over the resolved one:
+
+```bash
+uv pip install -e ../agentgraph --config-setting editable_mode=compat
+```
+
+`editable_mode=compat` is what keeps `pyright` working. A default editable install writes a runtime
+import hook that pyright cannot follow statically, so every `agentgraph` import resolves to nothing
+and cascades into roughly a thousand unknown-type errors. `compat` writes a plain path entry
+instead, and the committed `[tool.pyright]` config then resolves the checkout unchanged.
+
+`uv.lock` still pins `agentgraph-server` to the registry, and `uv run`/`uv sync` sync exactly
+against it — **either will silently revert this install**. Run the gates through
+`.venv/bin/python` as above, not `uv run`. If `ModuleNotFoundError: No module named 'agentgraph'`
+appears, or `pyright` suddenly reports hundreds of unknown types, the install was reverted: run the
+command again. To go back to the released AgentGraph deliberately, `uv sync`.
