@@ -293,6 +293,26 @@ def parse_url(url: str) -> TwgTarget | None:
     return None
 
 
+def canonical_url(url: str | None) -> str | None:
+    """Return the identifier-derived form of a URL this connector owns, or None.
+
+    A Confluence page URL ends in the page title, so a URL that arrives from a
+    payload or a caller is rebuilt from what `parse_url` keeps rather than stored
+    as given. A page name must never reach an observation record or entity
+    metadata.
+
+    This also normalises the host to `<site>.atlassian.net`, which the connector
+    is already committed to: `page_web_url()` — and therefore `entity_url()` —
+    emits only that spelling, and per `_SITE_DOMAIN_PATHS` a migrated tenant
+    keeps an `atlassian.net` redirect. Returns None for anything `parse_url`
+    cannot decode, including tiny wiki links.
+    """
+    if url is None:
+        return None
+    target = parse_url(url)
+    return target.web_url if target is not None else None
+
+
 def is_tiny_wiki_link(url: str) -> bool:
     """True for Confluence short links, which need a `twg resolve` round trip."""
     parsed = urlsplit(url)

@@ -76,9 +76,11 @@ def page_to_batch(
     body_text = flatten_rich_text(pick(body, "value", "representation", "text"))
     summary_excerpt = nested_str(payload, ("summary", "excerpt"))
     outline = _outline(payload)
+    # `twg confluence content get` returns Confluence's `_links.webui` shape, which
+    # ends in the page title, so every candidate is rebuilt from its page id.
     web_url = (
-        pick_str(payload, "url", "webUrl")
-        or target.web_url
+        urls.canonical_url(pick_str(payload, "url", "webUrl"))
+        or urls.canonical_url(target.web_url)
         or (urls.page_web_url(site, page_id, space_key) if site and page_id else None)
     )
 

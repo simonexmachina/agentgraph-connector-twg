@@ -96,6 +96,10 @@ site `hello`, and browsing either host is observed. Anything else is rejected ra
 - **Observe / fetch:** browsing or fetching a supported URL fetches that resource. Confluence short
   links (`/wiki/x/<tiny>`) are resolved through `twg resolve` — both when browsed and, for at most
   five per page, when found in a page body, since they carry no page id to decode offline.
+- **Canonical URLs:** a Confluence page URL ends in the page name, and an observation is recorded
+  and published to every installed feed connector, so a page name is never kept. Any URL that
+  arrives from a payload or a caller is rebuilt from its page id, leaving the space-scoped
+  `…/wiki/spaces/<KEY>/pages/<id>`.
 - **Poll (every 30 minutes):** `twg work query --scope me` covers your own recently touched work
   items, pages, and videos, hydrating at most `poll_item_limit` (default 50) resources per run and
   skipping anything fetched within the last 15 minutes.

@@ -151,6 +151,26 @@ def test_page_target_keeps_space_key_and_web_url() -> None:
     }
 
 
+def test_canonical_url_drops_the_page_title() -> None:
+    assert (
+        urls.canonical_url("https://acme.atlassian.net/wiki/spaces/ENG/pages/884736/Q3+plan")
+        == "https://acme.atlassian.net/wiki/spaces/ENG/pages/884736"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # A tiny link is not decodable offline, so there is no canonical form.
+        "https://acme.atlassian.net/wiki/x/AbCdEf",
+        "https://example.com/wiki/spaces/ENG/pages/884736/Q3+plan",
+        None,
+    ],
+)
+def test_canonical_url_returns_none_for_undecodable_urls(url: str | None) -> None:
+    assert urls.canonical_url(url) is None
+
+
 def test_workitem_reference_uses_workitem_resource_type() -> None:
     target = urls.parse_url("https://acme.atlassian.net/browse/ENG-42")
 

@@ -35,6 +35,16 @@ Markdown links also mean `EntityBatch.add_stubs_from` cannot be used on a page �
 keeps the trailing `)` — so `stubs.references_in_text` normalises first. `jira`, `atlas` and `loom`
 stay on `add_stubs_from` because their bodies are ADF, where URLs are whitespace-delimited.
 
+A page name must never reach an observation record or entity metadata. `ObservationMutation` is a
+deliberately low-information signal, and AgentGraph publishes it to every installed feed connector,
+so any URL arriving from a payload or a caller goes through `urls.canonical_url` — which rebuilds it
+from what `parse_url` keeps, i.e. `…/wiki/spaces/<KEY>/pages/<id>`. That covers
+`confluence.page_to_batch` (`twg confluence content get` returns Confluence's `_links.webui` shape,
+which ends in the title) and `_target()` in `__init__.py` (`agentgraph fetch --meta`, or a stale
+stored `fetch_meta`). Core then prefers `fetch_meta["web_url"]`, then `entity_url()`, over the
+browsed URL. `EntityUpsertMutation` still carries the title and body by design — that is the point
+of a snapshot; this closes the leak on the observation signal and on `metadata["web_url"]`.
+
 ## Entity Types
 
 This connector targets AgentGraph 0.7.0 through 0.7.x (`pyproject.toml`), which is what provides

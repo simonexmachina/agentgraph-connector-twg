@@ -191,6 +191,8 @@ def page_payload(**overrides: Any) -> dict[str, Any]:
         "title": "Atlas sync plan",
         "status": "current",
         "spaceId": "65539",
+        # Confluence's own `_links.webui` shape: the page title is part of the URL.
+        "url": "https://acme.atlassian.net/wiki/spaces/ENG/pages/884736/Atlas+sync+plan",
         "detail": "full",
         "snapshotToken": "token-1",
         "createdAt": "2026-07-02T08:00:00Z",

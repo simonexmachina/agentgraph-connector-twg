@@ -36,6 +36,15 @@ def test_page_maps_to_document_entity() -> None:
     assert page.metadata["web_url"] == "https://acme.atlassian.net/wiki/spaces/ENG/pages/884736"
 
 
+def test_page_url_from_payload_loses_the_page_title() -> None:
+    batch = confluence.page_to_batch(page_payload(), target=_target(), space_key="ENG")
+    page = next(entity for entity in batch.entities if entity.entity_type == "Document")
+
+    assert page.metadata["web_url"] == "https://acme.atlassian.net/wiki/spaces/ENG/pages/884736"
+    assert page.content is not None
+    assert "Atlas+sync+plan" not in page.content
+
+
 def test_page_content_includes_outline_and_body() -> None:
     batch = confluence.page_to_batch(page_payload(), target=_target(), space_key="ENG")
     page = next(entity for entity in batch.entities if entity.entity_type == "Document")

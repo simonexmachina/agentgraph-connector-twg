@@ -267,6 +267,34 @@ async def test_fetch_page_requests_markdown_and_resolves_space(
     assert not any(command.startswith("user bulk-lookup") for command in fake.commands())
 
 
+async def test_fetch_page_strips_the_title_from_a_caller_supplied_url(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = page_payload()
+    # Leave the caller's `web_url` as the only candidate, so it is what is tested.
+    del payload["url"]
+    fake = _FakeTwg(
+        {
+            "confluence content get": payload,
+            "confluence space get": {"id": "65539", "key": "ENG", "name": "Engineering"},
+        }
+    )
+    _install(monkeypatch, fake)
+
+    batch = await connector.fetch(
+        "document",
+        "confluence/acme/884736",
+        meta={
+            "space_key": "ENG",
+            "web_url": "https://acme.atlassian.net/wiki/spaces/ENG/pages/884736/Atlas+sync+plan",
+        },
+    )
+
+    page = next(entity for entity in batch.entities if entity.entity_type == "Document")
+    assert page.metadata["web_url"] == "https://acme.atlassian.net/wiki/spaces/ENG/pages/884736"
+
+
 async def test_fetch_page_includes_context_people_and_edges(
     connector: twg_connector.TwgConnector,
     monkeypatch: pytest.MonkeyPatch,

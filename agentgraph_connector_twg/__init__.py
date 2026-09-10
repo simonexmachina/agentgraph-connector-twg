@@ -391,7 +391,9 @@ class TwgConnector(BaseConnector):
         if target is None:
             return None
         space_key = (meta or {}).get("space_key") or target.space_key
-        web_url = (meta or {}).get("web_url") or target.web_url
+        # A caller-supplied URL (`agentgraph fetch --meta`, or a stale stored
+        # `fetch_meta`) can carry a Confluence page title, so it is rebuilt first.
+        web_url = urls.canonical_url((meta or {}).get("web_url")) or target.web_url
         site = (meta or {}).get("site") or target.site
         return urls.TwgTarget(
             kind=target.kind,
