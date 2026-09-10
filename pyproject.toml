@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentgraph-connector-twg"
-version = "0.2.1"
+version = "0.2.2"
 description = "Atlassian Teamwork Graph (twg) connector for AgentGraph"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "agentgraph-server>=0.7.0,<0.8",
+    "agentgraph-server>=0.7.1,<0.8",
     "pydantic>=2.12.5",
 ]
 
