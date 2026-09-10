@@ -1,4 +1,4 @@
-# atlassian-agentgraph-connector-twg
+# agentgraph-connector-twg
 
 An [AgentGraph](https://github.com/simonexmachina/agent-graph) connector for the Atlassian
 Teamwork Graph, built on the `twg` CLI.
@@ -31,24 +31,12 @@ This package is kept outside the AgentGraph repository because `twg` is internal
 
 ## Install
 
-Authenticate to the Atlassian package registry with your staff ID and an Artifactory Identity Token,
-then install through the internal PyPI virtual repository:
-
 ```bash
-uv pip install \
-  --index-url https://packages.atlassian.com/artifactory/api/pypi/pypi-internal/simple \
-  --extra-index-url https://pypi.org/simple \
-  atlassian-agentgraph-connector-twg
+uv pip install agentgraph-connector-twg
 ```
 
-The `pypi-internal` virtual repository carries this connector, which is private. Its dependencies
-are public, and are resolved from PyPI directly: Artifactory serves a stale PyPI JSON simple index
-for `pypi-internal`, which is the representation pip and uv read, so `agentgraph-server` releases
-newer than 0.6.1 are invisible there. Dropping `--extra-index-url` fails to resolve
-`agentgraph-server>=0.7.0`.
-
-The project distribution is named `atlassian-agentgraph-connector-twg`; its Python import package
-remains `agentgraph_connector_twg`.
+Releases through 0.2.0 were published privately as `atlassian-agentgraph-connector-twg`; the Python
+import package is unchanged.
 
 Confirm registration and configure your site:
 
@@ -127,7 +115,7 @@ uv sync
 ```
 
 That installs the `dev` dependency group and resolves AgentGraph from PyPI per `uv.lock`. Run the
-same gates CI does (`bitbucket-pipelines.yml`):
+same gates CI does (`.github/workflows/ci.yml`):
 
 ```bash
 .venv/bin/python -m pytest -q

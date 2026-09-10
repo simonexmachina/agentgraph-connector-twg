@@ -1,6 +1,6 @@
 ## Quality Gates
 
-Run these three, and only through the venv interpreter, matching `bitbucket-pipelines.yml`:
+Run these three, and only through the venv interpreter, matching `.github/workflows/ci.yml`:
 
 ```bash
 .venv/bin/python -m pytest -q
@@ -8,9 +8,10 @@ Run these three, and only through the venv interpreter, matching `bitbucket-pipe
 .venv/bin/python -m pyright
 ```
 
-Do not use `uv run` or `uv sync` for these. A contributor may have AgentGraph installed editable
-from a local checkout, and both commands sync exactly against `uv.lock` and silently revert it.
-See README.md § Development.
+Locally, do not use `uv run` or `uv sync` for these. A contributor may have AgentGraph installed
+editable from a local checkout, and both commands sync `.venv` exactly against `uv.lock` and
+silently revert it. See README.md § Development. CI is unaffected — it runs `uv sync --locked`
+from a clean checkout, where there is no editable install to lose.
 
 ## twg Fixtures
 

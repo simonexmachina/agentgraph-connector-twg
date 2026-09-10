@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run pyright
+
+      - name: Build distribution
+        run: uv build --out-dir dist
+
+      - name: Validate distribution
+        run: uvx twine check dist/*
+
+      - name: Test installed wheel
+        run: >-
+          uv run --isolated --with ./dist/agentgraph_connector_twg-*.whl
+          python -c "import importlib.metadata as m; from agentgraph_connector_twg import TwgConnector; assert any(ep.name == 'twg' for ep in m.entry_points(group='agentgraph.connectors'))"
