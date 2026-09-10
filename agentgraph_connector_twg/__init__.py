@@ -21,6 +21,7 @@ from agentgraph.connectors.base import (
     BaseConnector,
     ConnectorAccount,
     ConnectorCommandEffects,
+    EdgeRecord,
     EntityBatch,
     EntityRecord,
     FetchPolicy,
@@ -29,7 +30,7 @@ from agentgraph.connectors.base import (
     SourceReference,
 )
 
-from agentgraph_connector_twg import atlas, confluence, jira, loom, urls
+from agentgraph_connector_twg import atlas, confluence, jira, loom, stubs, urls
 from agentgraph_connector_twg.client import (
     TwgAuthError,
     TwgError,
@@ -69,6 +70,8 @@ _POLL_INTERVAL = timedelta(minutes=30)
 _INGEST_ITEM_LIMIT = 400
 _MAX_TRANSCRIPT_PREVIEW_PHRASES = 400
 _TRANSCRIPT_TIMEOUT = 120.0
+_MAX_TINY_LINK_RESOLUTIONS = 5
+"""Confluence short links resolved per page; each one costs a `twg resolve`."""
 _WORK_QUERY_SECTIONS = {
     "issues": "work-item",
     "pages": "page",
@@ -101,6 +104,7 @@ class TwgConnector(BaseConnector):
     def __init__(self) -> None:
         self._space_keys: dict[str, tuple[str, str | None]] = {}
         self._person_lookup_cache: dict[str, PersonRecord] = {}
+        self._tiny_links: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Auth and identity
@@ -467,7 +471,7 @@ class TwgConnector(BaseConnector):
             if space_id is not None and site is not None:
                 space_key, space_name = await self._space_identity(site, space_id)
 
-        return confluence.page_to_batch(
+        batch = confluence.page_to_batch(
             payload,
             target=urls.TwgTarget(
                 kind="page",
@@ -480,6 +484,81 @@ class TwgConnector(BaseConnector):
             space_key=space_key,
             space_name=space_name,
         )
+        _merge(batch, await self._page_context(page_id, target.entity_id, site))
+        _merge(batch, await self._tiny_link_references(batch, target.entity_id))
+        return batch
+
+    async def _page_context(
+        self,
+        page_id: str,
+        entity_id: str,
+        site: str | None,
+    ) -> EntityBatch | None:
+        """Relationship context is best-effort: a page is still worth indexing without it.
+
+        `--detail full` is required. The default summary returns targets carrying
+        only `{ari, type, name}` — no account id and no email — and truncates the
+        mention list. `--since` is not passed because it does not filter these
+        relationships.
+        """
+        try:
+            envelope = await run_twg(
+                ["context", "confluence", "page", page_id, "--detail", "full"],
+                site=site,
+            )
+        except TwgError as exc:
+            logger.debug("twg context for page %s unavailable: %s", page_id, exc)
+            return None
+        payload = _first_mapping(payload_data(envelope))
+        if payload is None:
+            return None
+        return confluence.context_to_batch(payload, source_entity_id=entity_id)
+
+    async def _tiny_link_references(self, batch: EntityBatch, entity_id: str) -> EntityBatch:
+        """Resolve the Confluence short links in a page body into Document stubs.
+
+        `/wiki/x/<tiny>` cannot be decoded offline, so every unseen one costs a
+        `twg resolve`. Resolutions are capped per page and memoised for the
+        connector's lifetime, because the same short links recur across the pages
+        of a space.
+        """
+        document = next(
+            (entity for entity in batch.entities if entity.platform_entity_id == entity_id),
+            None,
+        )
+        links = stubs.tiny_links_in_text(document.content or "" if document is not None else "")
+        pending = [link for link in links if link not in self._tiny_links][
+            :_MAX_TINY_LINK_RESOLUTIONS
+        ]
+        resolved = await asyncio.gather(*(self._resolve_via_twg(link) for link in pending))
+        for link, target in zip(pending, resolved, strict=True):
+            if target is not None:
+                self._tiny_links[link] = target.entity_id
+
+        references = EntityBatch()
+        seen = {entity_id}
+        for link in links:
+            link_entity_id = self._tiny_links.get(link)
+            if link_entity_id is None or link_entity_id in seen:
+                continue
+            seen.add(link_entity_id)
+            references.entities.append(
+                EntityRecord(
+                    entity_type="Document",
+                    platform=self.source,
+                    platform_entity_id=link_entity_id,
+                    is_stub=True,
+                )
+            )
+            references.edges.append(
+                EdgeRecord(
+                    edge_type="references",
+                    source_platform_entity_id=entity_id,
+                    target_platform_entity_id=link_entity_id,
+                    platform="cross",
+                )
+            )
+        return references
 
     async def _space_identity(self, site: str, space_id: str) -> tuple[str | None, str | None]:
         """Resolve a numeric space id to its key and name, caching the answer."""

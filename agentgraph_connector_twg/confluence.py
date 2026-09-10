@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Final
 
 from agentgraph.connectors.base import (
     EdgeRecord,
@@ -27,8 +27,35 @@ from agentgraph_connector_twg.payloads import (
     pick_mapping,
     pick_str,
 )
+from agentgraph_connector_twg.stubs import references_in_text
 
 _BODY_FORMAT_LABELS = {"md": "markdown", "markdown": "markdown", "html": "html"}
+
+MAX_CONTEXT_TARGETS = 50
+"""Targets turned into edges per relationship; the CLI's own `--first` default is 50."""
+
+_RELATIONSHIP_EDGES: Final[dict[str, tuple[str, str | None]]] = {
+    # Keyed on the verb in the middle of a relationship name
+    # (`atlassian_user_<verb>_confluence_page`) rather than the whole name, so a
+    # blogpost (`…_confluence_blogpost`) and any future product-suffix rename
+    # keep working — the same upgrade tolerance `payloads.py` documents.
+    "mentioned_in": ("mentions", None),
+    "owns": ("authored", "owner"),
+    "created": ("authored", "author"),
+    "updated": ("authored", "editor"),
+    "contributed_to": ("participated_in", "contributor"),
+    "watches": ("participated_in", "watcher"),
+}
+
+_IGNORED_RELATIONSHIPS: Final[frozenset[str]] = frozenset(
+    {
+        # A view is passive: it says nothing about the page beyond traffic, and a
+        # popular page names half the org this way.
+        "viewed",
+        # twg's own snapshotting, not a human relationship to the content.
+        "snapshotted",
+    }
+)
 
 
 def page_to_batch(
@@ -138,8 +165,91 @@ def page_to_batch(
 
     batch.persons.extend(persons.values())
     batch.edges.extend(edges)
-    batch.add_stubs_from(entity)
+    stub_entities, reference_edges = references_in_text(
+        entity.content or "",
+        source_entity_id=entity_id,
+    )
+    # A body linking its own space would otherwise stub an entity this batch
+    # already carries in full — the edge is still true, so only the stub is dropped.
+    already_known = {(item.platform, item.platform_entity_id) for item in batch.entities}
+    batch.entities.extend(
+        stub
+        for stub in stub_entities
+        if (stub.platform, stub.platform_entity_id) not in already_known
+    )
+    batch.edges.extend(reference_edges)
     return batch
+
+
+def context_to_batch(
+    payload: Mapping[str, Any],
+    *,
+    source_entity_id: str,
+) -> EntityBatch:
+    """Turn `twg context confluence page` relationships into people and edges.
+
+    A markdown body carries no account ids — the `--format md` conversion leaves
+    a mention as the plain text `@William Dahl` — so this is the only place the
+    people a page names reach the graph. Each target carries both an `accountId`
+    and an `email`, so the people it yields need no `user bulk-lookup`.
+
+    Edge direction follows the connector's own convention rather than twg's
+    `direction` field, which reports every one of these as inbound.
+    """
+    batch = EntityBatch()
+    persons: dict[str, PersonRecord] = {}
+    edges: list[EdgeRecord] = []
+    for item in as_sequence(pick(payload, "relationships", "relationshipSummary")):
+        relationship = as_mapping(item)
+        if relationship is None:
+            continue
+        mapped = _relationship_edge(pick_str(relationship, "relationshipName", "name") or "")
+        if mapped is None:
+            continue
+        edge_type, role = mapped
+        for raw_target in as_sequence(relationship.get("targets"))[:MAX_CONTEXT_TARGETS]:
+            target = as_mapping(raw_target)
+            # A target can be `ari:cloud:identity::user/unidentified`, which
+            # carries no account id and would otherwise key a Person on that ARI.
+            if target is None or pick_str(target, "accountId") is None:
+                continue
+            person = person_from_payload(target, platform=urls.SOURCE)
+            if person is None:
+                continue
+            persons.setdefault(person.platform_user_id, person)
+            if role is None:
+                # A mention runs from the page to the person it names.
+                edges.append(
+                    EdgeRecord(
+                        edge_type=edge_type,
+                        source_platform_entity_id=source_entity_id,
+                        target_platform_user_id=person.platform_user_id,
+                        platform=urls.SOURCE,
+                    )
+                )
+            else:
+                edges.append(
+                    EdgeRecord(
+                        edge_type=edge_type,
+                        source_platform_user_id=person.platform_user_id,
+                        target_platform_entity_id=source_entity_id,
+                        platform=urls.SOURCE,
+                        properties={"role": role},
+                    )
+                )
+    batch.persons.extend(persons.values())
+    batch.edges.extend(edges)
+    return batch
+
+
+def _relationship_edge(relationship_name: str) -> tuple[str, str | None] | None:
+    """Map a relationship name onto `(edge_type, role)`, or None to skip it."""
+    if any(verb in relationship_name for verb in _IGNORED_RELATIONSHIPS):
+        return None
+    for verb, mapping in _RELATIONSHIP_EDGES.items():
+        if verb in relationship_name:
+            return mapping
+    return None
 
 
 def space_to_entity(

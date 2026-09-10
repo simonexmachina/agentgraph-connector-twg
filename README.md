@@ -15,9 +15,15 @@ Teamwork Graph, built on the `twg` CLI.
 | Loom video | `Video` | Title, description, and the **transcript**; `metadata.web_url` is the watch link |
 
 People become `Person` entities from reporters, assignees, commenters, authors, editors, video
-owners, Atlas owners and update authors, and `@` mentions. Relationships from
-`twg context jira workitem`, Jira issue links, and Atlas goal/project links become `references`
-edges, with stub entities for linked resources that have not been fetched yet.
+owners, Atlas owners and update authors, and `@` mentions. A Jira mention is read from the work
+item's body; a Confluence one cannot be, because the markdown conversion leaves a mention as the
+plain text `@Name` with no account id — so a page fetch spends a second call on
+`twg context confluence page --detail full`, which also yields the page's owner, contributors and
+watchers.
+
+Relationships from `twg context`, Jira issue links, Atlas goal/project links, and the Atlassian and
+Loom links in a Confluence page body become `references` edges, with stub entities for linked
+resources that have not been fetched yet.
 
 This package is kept outside the AgentGraph repository because `twg` is internal Atlassian tooling.
 
@@ -88,7 +94,8 @@ site `hello`, and browsing either host is observed. Anything else is rejected ra
 ## Refresh behaviour
 
 - **Observe / fetch:** browsing or fetching a supported URL fetches that resource. Confluence short
-  links (`/wiki/x/<tiny>`) are resolved through `twg resolve`.
+  links (`/wiki/x/<tiny>`) are resolved through `twg resolve` — both when browsed and, for at most
+  five per page, when found in a page body, since they carry no page id to decode offline.
 - **Poll (every 30 minutes):** `twg work query --scope me` covers your own recently touched work
   items, pages, and videos, hydrating at most `poll_item_limit` (default 50) resources per run and
   skipping anything fetched within the last 15 minutes.

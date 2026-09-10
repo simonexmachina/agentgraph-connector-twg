@@ -17,6 +17,7 @@ from conftest import (
     atlas_url,
     classify_atlassian_urls,
     goal_payload,
+    page_context_payload,
     page_payload,
     video_payload,
     workitem_payload,
@@ -264,6 +265,111 @@ async def test_fetch_page_requests_markdown_and_resolves_space(
     assert any("--format md" in command for command in fake.commands())
     assert any("confluence space get 65539" in command for command in fake.commands())
     assert not any(command.startswith("user bulk-lookup") for command in fake.commands())
+
+
+async def test_fetch_page_includes_context_people_and_edges(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeTwg(
+        {
+            "confluence content get": page_payload(),
+            "confluence space get": {"key": "ENG", "name": "Engineering"},
+            "context confluence page": page_context_payload(),
+        }
+    )
+    _install(monkeypatch, fake)
+
+    batch = await connector.fetch("document", "confluence/acme/884736")
+
+    assert "context confluence page 884736 --detail full" in fake.commands()
+    assert {
+        edge.target_platform_user_id for edge in batch.edges if edge.edge_type == "mentions"
+    } == {"acct-sam", "acct-lee"}
+    # `--detail full` supplies emails, so mentioned people need no directory lookup.
+    assert not any(command.startswith("user bulk-lookup") for command in fake.commands())
+
+
+async def test_fetch_page_survives_missing_context(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeTwg(
+        {
+            "confluence content get": page_payload(),
+            "confluence space get": {"key": "ENG", "name": "Engineering"},
+            "context confluence page": TwgCommandError("context unavailable"),
+        }
+    )
+    _install(monkeypatch, fake)
+
+    batch = await connector.fetch("document", "confluence/acme/884736")
+
+    assert any(entity.entity_type == "Document" for entity in batch.entities)
+    assert not any(edge.edge_type == "mentions" for edge in batch.edges)
+
+
+async def test_page_tiny_links_resolve_once_and_are_cached(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = page_payload(
+        body={
+            "format": "md",
+            "value": (
+                "See [the plan](https://acme.atlassian.net/wiki/x/AbCd) and "
+                "[the retro](https://acme.atlassian.net/wiki/x/EfGh)."
+            ),
+        }
+    )
+
+    def _resolve(argv: list[str]) -> dict[str, Any]:
+        page_id = "884737" if argv[-1].endswith("AbCd") else "884738"
+        return {"data": {"response": f"ari:cloud:confluence:cloud-1:page/{page_id}"}}
+
+    fake = _FakeTwg(
+        {
+            "confluence content get": payload,
+            "confluence space get": {"key": "ENG", "name": "Engineering"},
+            "context confluence page": page_context_payload(relationships=[]),
+            "resolve": _resolve,
+        }
+    )
+    _install(monkeypatch, fake)
+
+    first = await connector.fetch("document", "confluence/acme/884736")
+    await connector.fetch("document", "confluence/acme/884736")
+
+    referenced = {
+        edge.target_platform_entity_id
+        for edge in first.edges
+        if edge.edge_type == "references"
+    }
+    assert referenced == {"confluence/acme/884737", "confluence/acme/884738"}
+    assert len([command for command in fake.commands() if command.startswith("resolve")]) == 2
+
+
+async def test_page_tiny_link_resolution_is_bounded(
+    connector: twg_connector.TwgConnector,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tiny = " ".join(
+        f"[link {index}](https://acme.atlassian.net/wiki/x/Tiny{index})" for index in range(9)
+    )
+    fake = _FakeTwg(
+        {
+            "confluence content get": page_payload(body={"format": "md", "value": tiny}),
+            "confluence space get": {"key": "ENG", "name": "Engineering"},
+            "context confluence page": page_context_payload(relationships=[]),
+            "resolve": TwgCommandError("no match"),
+        }
+    )
+    _install(monkeypatch, fake)
+
+    await connector.fetch("document", "confluence/acme/884736")
+
+    resolutions = [command for command in fake.commands() if command.startswith("resolve")]
+    assert len(resolutions) == twg_connector._MAX_TINY_LINK_RESOLUTIONS  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_fetch_page_enriches_id_only_people_and_caches_them(

@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
-from conftest import page_payload
+import pytest
+from conftest import (
+    atlas_url,
+    classify_atlassian_urls,
+    page_context_payload,
+    page_payload,
+)
 
 from agentgraph_connector_twg import confluence, urls
+
+PAGE_ID = "confluence/acme/884736"
 
 
 def _target() -> urls.TwgTarget:
@@ -93,6 +101,151 @@ def test_page_without_space_key_has_no_folder() -> None:
     batch = confluence.page_to_batch(page_payload(), target=target)
 
     assert [entity.entity_type for entity in batch.entities] == ["Document"]
+
+
+def test_context_mentions_become_edges_to_each_account() -> None:
+    batch = confluence.context_to_batch(page_context_payload(), source_entity_id=PAGE_ID)
+
+    mentioned = {
+        edge.target_platform_user_id
+        for edge in batch.edges
+        if edge.edge_type == "mentions" and edge.source_platform_entity_id == PAGE_ID
+    }
+    assert mentioned == {"acct-sam", "acct-lee"}
+
+    people = {person.platform_user_id: person for person in batch.persons}
+    assert people["acct-sam"].canonical_email == "sam@acme.test"
+    assert people["acct-sam"].display_name == "Sam Ito"
+    # twg omits the email for some accounts; the mention is still worth an edge.
+    assert people["acct-lee"].canonical_email is None
+
+
+def test_context_skips_unidentified_targets_and_passive_relationships() -> None:
+    batch = confluence.context_to_batch(page_context_payload(), source_entity_id=PAGE_ID)
+
+    identifiers = {person.platform_user_id for person in batch.persons}
+    assert not any("unidentified" in identifier for identifier in identifiers)
+    assert "acct-viewer" not in identifiers
+    assert not any(
+        edge.source_platform_user_id == "acct-viewer" or edge.target_platform_user_id == "acct-viewer"
+        for edge in batch.edges
+    )
+
+
+def test_context_roles_reach_contributors_and_watchers() -> None:
+    batch = confluence.context_to_batch(page_context_payload(), source_entity_id=PAGE_ID)
+
+    participated = {
+        (edge.source_platform_user_id, edge.properties.get("role"))
+        for edge in batch.edges
+        if edge.edge_type == "participated_in" and edge.target_platform_entity_id == PAGE_ID
+    }
+    assert participated == {("acct-dev", "contributor"), ("acct-maya", "watcher")}
+
+
+def test_context_maps_ownership_and_editing_to_authored() -> None:
+    payload = page_context_payload(
+        relationships=[
+            {
+                "relationshipName": name,
+                "direction": "inbound",
+                "targets": [{"name": "Maya Chen", "accountId": "acct-maya"}],
+            }
+            for name in (
+                "atlassian_user_owns_confluence_page",
+                "atlassian_user_created_confluence_page",
+                "atlassian_user_updated_confluence_page",
+            )
+        ]
+    )
+
+    batch = confluence.context_to_batch(payload, source_entity_id=PAGE_ID)
+
+    assert {edge.properties.get("role") for edge in batch.edges} == {"owner", "author", "editor"}
+    assert {edge.edge_type for edge in batch.edges} == {"authored"}
+    # One Person, three edges: a page's owner is usually its author too.
+    assert len(batch.persons) == 1
+
+
+def test_context_reads_a_blogpost_relationship_name() -> None:
+    """The verb is matched, not the whole name, so a blogpost still yields edges."""
+    payload = page_context_payload(
+        relationships=[
+            {
+                "relationshipName": "atlassian_user_mentioned_in_confluence_blogpost",
+                "targets": [{"name": "Sam Ito", "accountId": "acct-sam"}],
+            }
+        ]
+    )
+
+    batch = confluence.context_to_batch(payload, source_entity_id=PAGE_ID)
+
+    assert [edge.target_platform_user_id for edge in batch.edges] == ["acct-sam"]
+
+
+def test_context_reads_a_summary_shaped_payload() -> None:
+    payload = {
+        "relationshipSummary": [
+            {
+                "relationshipName": "atlassian_user_watches_confluence_page",
+                "targets": [{"ari": "ari:cloud:identity::user/acct-sam", "accountId": "acct-sam"}],
+            }
+        ]
+    }
+
+    batch = confluence.context_to_batch(payload, source_entity_id=PAGE_ID)
+
+    assert [edge.properties.get("role") for edge in batch.edges] == ["watcher"]
+
+
+def test_context_caps_targets_per_relationship() -> None:
+    payload = page_context_payload(
+        relationships=[
+            {
+                "relationshipName": "atlassian_user_mentioned_in_confluence_page",
+                "targets": [
+                    {"accountId": f"acct-{index}"}
+                    for index in range(confluence.MAX_CONTEXT_TARGETS + 5)
+                ],
+            }
+        ]
+    )
+
+    batch = confluence.context_to_batch(payload, source_entity_id=PAGE_ID)
+
+    assert len(batch.edges) == confluence.MAX_CONTEXT_TARGETS
+
+
+def test_markdown_links_become_references(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A markdown link's closing `)` must not reach the URL classifier."""
+    classify_atlassian_urls(monkeypatch)
+
+    batch = confluence.page_to_batch(page_payload(), target=_target(), space_key="ENG")
+
+    referenced = {
+        edge.target_platform_entity_id
+        for edge in batch.edges
+        if edge.edge_type == "references" and edge.source_platform_entity_id == PAGE_ID
+    }
+    assert "jira/acme/ENG-42" in referenced
+    assert "confluence/acme/884737" in referenced
+    assert "loom/abc123def456" in referenced
+    assert any(reference is not None and "/project/ATLAS-133324" in reference for reference in referenced)
+    assert {entity.platform_entity_id for entity in batch.entities if entity.is_stub} <= referenced
+
+
+def test_a_linked_space_is_not_keyed_on_its_bracket(monkeypatch: pytest.MonkeyPatch) -> None:
+    classify_atlassian_urls(monkeypatch)
+
+    batch = confluence.page_to_batch(page_payload(), target=_target(), space_key="ENG")
+
+    identifiers = {entity.platform_entity_id for entity in batch.entities}
+    assert "confluence/acme/space/ENG)" not in identifiers
+    # The space it links is the one it lives in, already in this batch in full.
+    assert [entity.platform_entity_id for entity in batch.entities].count(
+        "confluence/acme/space/ENG"
+    ) == 1
+    assert atlas_url("project", "ATLAS-133324") not in identifiers
 
 
 def test_space_maps_to_folder_entity() -> None:

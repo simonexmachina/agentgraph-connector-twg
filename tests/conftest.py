@@ -59,6 +59,14 @@ def fake_binary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return binary
 
 
+ATLAS_ORG_ID = "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d"
+ATLAS_CLOUD_ID = "1f2e3d4c-5b6a-7988-9a0b-1c2d3e4f5a6b"
+
+
+def atlas_url(kind: str, key: str) -> str:
+    return f"https://home.atlassian.com/o/{ATLAS_ORG_ID}/s/{ATLAS_CLOUD_ID}/{kind}/{key}"
+
+
 def workitem_payload(**overrides: Any) -> dict[str, Any]:
     """A `twg jira workitem get --full` payload with the documented field shape."""
     payload: dict[str, Any] = {
@@ -156,6 +164,25 @@ def idea_payload(**overrides: Any) -> dict[str, Any]:
     return payload
 
 
+PAGE_BODY_MARKDOWN = f"""## Overview
+
+Atlas sync runs every 15 minutes. @Sam Ito owns the retry path.
+
+Tracked in [ENG-42](https://acme.atlassian.net/browse/ENG-42), described in
+[the retry design](https://acme.atlassian.net/wiki/spaces/ENG/pages/884737/Retry+design),
+delivered under [{atlas_url("project", "ATLAS-133324")}]({atlas_url("project", "ATLAS-133324")}?xpis=smart-link),
+and demonstrated in [the walkthrough](https://www.loom.com/share/abc123def456).
+
+Everything else lives in the [Engineering space](https://acme.atlassian.net/wiki/spaces/ENG)."""
+"""A markdown body as `--format md` renders it.
+
+The conversion is lossy in two ways this connector has to cope with: a mention
+survives only as the plain text `@Sam Ito`, with no account id, and every link is
+markdown, so a naive URL scan keeps the closing `)` — and, for the Atlas smart
+link, a whole second URL after `](`.
+"""
+
+
 def page_payload(**overrides: Any) -> dict[str, Any]:
     """A `twg confluence content get --detail full --format md` payload."""
     payload: dict[str, Any] = {
@@ -172,7 +199,7 @@ def page_payload(**overrides: Any) -> dict[str, Any]:
             {"level": 1, "text": "Overview", "anchor": "overview"},
             {"level": 2, "text": "Retry policy", "anchor": "retry"},
         ],
-        "body": {"format": "md", "value": "## Overview\n\nAtlas sync runs every 15 minutes.", "lossyConversion": True},
+        "body": {"format": "md", "value": PAGE_BODY_MARKDOWN, "lossyConversion": True},
         "metadata": {
             "authorId": {"accountId": "acct-maya", "displayName": "Maya Chen"},
             "totalViews": 128,
@@ -188,12 +215,92 @@ def page_payload(**overrides: Any) -> dict[str, Any]:
     return payload
 
 
-ATLAS_ORG_ID = "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d"
-ATLAS_CLOUD_ID = "1f2e3d4c-5b6a-7988-9a0b-1c2d3e4f5a6b"
+def page_context_payload(**overrides: Any) -> dict[str, Any]:
+    """A `twg context confluence page <id> --detail full` payload.
 
-
-def atlas_url(kind: str, key: str) -> str:
-    return f"https://home.atlassian.com/o/{ATLAS_ORG_ID}/s/{ATLAS_CLOUD_ID}/{kind}/{key}"
+    Every relationship comes back `inbound` with `AtlassianAccountUser` targets;
+    `--detail full` is what supplies `accountId` and `email` on each one.
+    """
+    payload: dict[str, Any] = {
+        "object": {
+            "ari": "ari:cloud:confluence:cloud-1:page/884736",
+            "type": "ConfluencePage",
+            "name": "Atlas sync plan",
+        },
+        "relationships": [
+            {
+                "relationshipName": "atlassian_user_mentioned_in_confluence_page",
+                "direction": "inbound",
+                "targetType": "AtlassianAccountUser",
+                "targets": [
+                    {
+                        "ari": "ari:cloud:identity::user/acct-sam",
+                        "type": "AtlassianAccountUser",
+                        "name": "Sam Ito",
+                        "accountId": "acct-sam",
+                        "email": "Sam@Acme.test",
+                        "zoneinfo": "Australia/Sydney",
+                    },
+                    {
+                        "ari": "ari:cloud:identity::user/acct-lee",
+                        "type": "AtlassianAccountUser",
+                        "name": "Lee Kim",
+                        "accountId": "acct-lee",
+                    },
+                    # Confluence reports deactivated and anonymous mentions this
+                    # way, with no account id to key a Person on.
+                    {
+                        "ari": "ari:cloud:identity::user/unidentified",
+                        "type": "AtlassianAccountUser",
+                    },
+                ],
+            },
+            {
+                "relationshipName": "atlassian_user_contributed_to_confluence_page",
+                "direction": "inbound",
+                "targetType": "AtlassianAccountUser",
+                "targets": [
+                    {
+                        "ari": "ari:cloud:identity::user/acct-dev",
+                        "type": "AtlassianAccountUser",
+                        "name": "Dev Patel",
+                        "accountId": "acct-dev",
+                        "email": "dev@acme.test",
+                    }
+                ],
+            },
+            {
+                "relationshipName": "atlassian_user_watches_confluence_page",
+                "direction": "inbound",
+                "targetType": "AtlassianAccountUser",
+                "targets": [
+                    {
+                        "ari": "ari:cloud:identity::user/acct-maya",
+                        "type": "AtlassianAccountUser",
+                        "name": "Maya Chen",
+                        "accountId": "acct-maya",
+                        "email": "maya@acme.test",
+                    }
+                ],
+            },
+            {
+                "relationshipName": "atlassian_user_viewed_confluence_page",
+                "direction": "inbound",
+                "targetType": "AtlassianAccountUser",
+                "targets": [
+                    {
+                        "ari": "ari:cloud:identity::user/acct-viewer",
+                        "type": "AtlassianAccountUser",
+                        "name": "Casual Reader",
+                        "accountId": "acct-viewer",
+                    }
+                ],
+            },
+        ],
+        "pagination": {"first": 50, "hasMore": False},
+    }
+    payload.update(overrides)
+    return payload
 
 
 def goal_payload(**overrides: Any) -> dict[str, Any]:
