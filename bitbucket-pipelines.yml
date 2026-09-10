@@ -1,5 +1,14 @@
 image: python:3.12
 
+# Dependencies resolve from public PyPI rather than pypi-internal. Nothing in this
+# package's resolution graph is private — agentgraph-server and pydantic at runtime,
+# pytest/pyright/ruff/twine/build in CI — and Artifactory serves a stale PyPI JSON simple
+# index for pypi-internal (as of 2026-09-10 it stops at agentgraph-server 0.6.1 and
+# agentgraph-connector-web 0.5.4, long after 0.7.0 and 0.5.6 published, while its HTML
+# index is current). pip and uv both read the JSON index, so neither can satisfy this
+# package's agentgraph-server>=0.7.0 floor from there. Artifactory is still where the
+# built distribution is published, so the publish step keeps its credentials.
+
 definitions:
   steps:
     - step: &verify
@@ -7,11 +16,8 @@ definitions:
         caches:
           - pip
         script:
-          - pipe: atlassian/artifactory-sidekick:v1
-          - source .artifactory/activate.sh
           - export PIP_DISABLE_PIP_VERSION_CHECK=1
           - export PIP_NO_CACHE_DIR=1
-          - export PIP_INDEX_URL="https://${ARTIFACTORY_USERNAME}:${ARTIFACTORY_PASSWORD}@packages.atlassian.com/artifactory/api/pypi/pypi-internal/simple"
           - python -m venv .venv
           - .venv/bin/python -m pip install --upgrade pip
           - .venv/bin/python -m pip install . build twine 'pyright>=1.1.408' 'pytest>=9.0.2' 'pytest-asyncio>=1.3.0' 'ruff>=0.11.0'
@@ -21,7 +27,7 @@ definitions:
           - .venv/bin/python -m build
           - .venv/bin/python -m twine check dist/*
           - python -m venv /tmp/package-smoke
-          - /tmp/package-smoke/bin/python -m pip install --index-url "$PIP_INDEX_URL" dist/*.whl
+          - /tmp/package-smoke/bin/python -m pip install dist/*.whl
           - /tmp/package-smoke/bin/agentgraph list-connectors
 
 pipelines:
@@ -41,7 +47,6 @@ pipelines:
             - source .artifactory/activate.sh
             - export PIP_DISABLE_PIP_VERSION_CHECK=1
             - export PIP_NO_CACHE_DIR=1
-            - export PIP_INDEX_URL="https://${ARTIFACTORY_USERNAME}:${ARTIFACTORY_PASSWORD}@packages.atlassian.com/artifactory/api/pypi/pypi-internal/simple"
             - PROJECT_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
             - test "$BITBUCKET_TAG" = "v$PROJECT_VERSION"
             - python -m venv .venv
@@ -53,7 +58,7 @@ pipelines:
             - .venv/bin/python -m build
             - .venv/bin/python -m twine check dist/*
             - python -m venv /tmp/package-smoke
-            - /tmp/package-smoke/bin/python -m pip install --index-url "$PIP_INDEX_URL" dist/*.whl
+            - /tmp/package-smoke/bin/python -m pip install dist/*.whl
             - /tmp/package-smoke/bin/agentgraph list-connectors
             - export TWINE_USERNAME="$ARTIFACTORY_USERNAME"
             - export TWINE_PASSWORD="$ARTIFACTORY_PASSWORD"

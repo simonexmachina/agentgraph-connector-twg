@@ -37,12 +37,18 @@ then install through the internal PyPI virtual repository:
 ```bash
 uv pip install \
   --index-url https://packages.atlassian.com/artifactory/api/pypi/pypi-internal/simple \
+  --extra-index-url https://pypi.org/simple \
   atlassian-agentgraph-connector-twg
 ```
 
-The `pypi-internal` virtual repository supplies both private Atlassian packages and approved public
-Python dependencies. The project distribution is named `atlassian-agentgraph-connector-twg`; its
-Python import package remains `agentgraph_connector_twg`.
+The `pypi-internal` virtual repository carries this connector, which is private. Its dependencies
+are public, and are resolved from PyPI directly: Artifactory serves a stale PyPI JSON simple index
+for `pypi-internal`, which is the representation pip and uv read, so `agentgraph-server` releases
+newer than 0.6.1 are invisible there. Dropping `--extra-index-url` fails to resolve
+`agentgraph-server>=0.7.0`.
+
+The project distribution is named `atlassian-agentgraph-connector-twg`; its Python import package
+remains `agentgraph_connector_twg`.
 
 Confirm registration and configure your site:
 
@@ -120,8 +126,8 @@ work data; choose your polled scopes deliberately.
 uv sync
 ```
 
-That installs the `dev` dependency group and resolves AgentGraph from `pypi-internal` per
-`uv.lock`. Run the same gates CI does (`bitbucket-pipelines.yml`):
+That installs the `dev` dependency group and resolves AgentGraph from PyPI per `uv.lock`. Run the
+same gates CI does (`bitbucket-pipelines.yml`):
 
 ```bash
 .venv/bin/python -m pytest -q
@@ -149,8 +155,8 @@ import hook that pyright cannot follow statically, so every `agentgraph` import 
 and cascades into roughly a thousand unknown-type errors. `compat` writes a plain path entry
 instead, and the committed `[tool.pyright]` config then resolves the checkout unchanged.
 
-`uv.lock` still pins `agentgraph-server` to the registry, and `uv run`/`uv sync` sync exactly
-against it — **either will silently revert this install**. Run the gates through
+`uv.lock` still pins `agentgraph-server` to a published release, and `uv run`/`uv sync` sync
+exactly against it — **either will silently revert this install**. Run the gates through
 `.venv/bin/python` as above, not `uv run`. If `ModuleNotFoundError: No module named 'agentgraph'`
 appears, or `pyright` suddenly reports hundreds of unknown types, the install was reverted: run the
 command again. To go back to the released AgentGraph deliberately, `uv sync`.
