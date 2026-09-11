@@ -9,7 +9,7 @@ resolution-markers = [
 
 [[package]]
 name = "agentgraph-connector-twg"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "." }
 dependencies = [
     { name = "agentgraph-server" },
