@@ -55,7 +55,7 @@ wheels = [
 
 [[package]]
 name = "agentgraph-server"
-version = "0.7.1"
+version = "0.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agentgraph-connector-web" },
@@ -75,9 +75,9 @@ dependencies = [
     { name = "typer" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/b4/bda7c703519901d3a8a7297abe27b00b5729496ea2cc0b14d77144b42fb3/agentgraph_server-0.7.1.tar.gz", hash = "sha256:e1fb35b1195ba37755dc2658f3e55f25595e34b1665ace2a887cf40d375be478", size = 242945, upload-time = "2026-09-10T08:08:57.125Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f5/6c/e268f1b50c10a186220e3487e0464a86bb9fd21f065e54c66f9673a98956/agentgraph_server-0.7.2.tar.gz", hash = "sha256:1753751e8fb85cb749a0578abdca91e7e1c323a7259a47c03ad2526415a4187b", size = 243355, upload-time = "2026-09-11T02:22:08.303Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/43/ec6c0b9698dbfaee9bf530eb93ae2a4537300bb77cc477a88998f0a93b1d/agentgraph_server-0.7.1-py3-none-any.whl", hash = "sha256:9c88a8a01d016b938445ae5ac337a9db7a18aa67b1f5a7c8c1692507ab126b7b", size = 152526, upload-time = "2026-09-10T08:08:55.312Z" },
+    { url = "https://files.pythonhosted.org/packages/34/79/823455be52967094ee7f368bc62253d2a58279e59ca582e5ffb9eb13cab5/agentgraph_server-0.7.2-py3-none-any.whl", hash = "sha256:1130aff912a25b5b2d8fc2cdb1de40d387c387b165b0271551399e6bc1e77ee7", size = 152709, upload-time = "2026-09-11T02:22:06.81Z" },
 ]
 
 [[package]]
