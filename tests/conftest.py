@@ -164,6 +164,95 @@ def idea_payload(**overrides: Any) -> dict[str, Any]:
     return payload
 
 
+def workitem_context_payload(**overrides: Any) -> dict[str, Any]:
+    """A `twg context get <key> --type jira-workitem --types … --detail full` payload.
+
+    `context get` groups its relationships instead of returning one flat list,
+    and the two the connector lives on — the Atlas project tracking the work and
+    the pages referencing it — both come back `inbound`, so their edges run
+    target → work item. The `code` and `people` groups are here to pin that
+    targets `stub_for_url` cannot classify fall out on their own.
+    """
+    payload: dict[str, Any] = {
+        "anchor": {
+            "ari": "ari:cloud:jira:cloud-1:issue/10042",
+            "type": "JiraIssue",
+            "name": "ENG-42",
+            "url": "https://acme.atlassian.net/browse/ENG-42",
+        },
+        "groups": {
+            "relationships": [],
+            "code": [
+                {
+                    "relationshipName": "issue_associated_deployment",
+                    "direction": "outbound",
+                    "targetType": "GraphDeployment",
+                    "targets": [
+                        {
+                            "ari": "ari:cloud:graph::deployment/9f1c",
+                            "name": "deploy 4821",
+                            "url": "https://bitbucket.org/acme/repo/addon/pipelines/deployments",
+                        }
+                    ],
+                }
+            ],
+            "docs": [
+                {
+                    "relationshipName": "content_referenced_entity",
+                    "direction": "inbound",
+                    "targetType": "ConfluencePage",
+                    "targets": [
+                        {
+                            "ari": "ari:cloud:confluence:cloud-1:page/884736",
+                            "name": "Atlas sync plan",
+                            "url": "https://acme.atlassian.net/wiki/spaces/ENG/pages/884736/Plan",
+                        },
+                        {
+                            "ari": "ari:cloud:confluence:cloud-1:page/884737",
+                            "name": "Retry design",
+                            "url": "https://acme.atlassian.net/wiki/spaces/ENG/pages/884737/Retry+design",
+                        },
+                    ],
+                }
+            ],
+            "people": [
+                {
+                    "relationshipName": "issue_has_assignee",
+                    "direction": "outbound",
+                    "targetType": "IdentityUser",
+                    "targets": [
+                        {
+                            "ari": "ari:cloud:identity::user/acct-sam",
+                            "type": "IdentityUser",
+                            "name": "Sam Ito",
+                            "accountId": "acct-sam",
+                        }
+                    ],
+                }
+            ],
+            "delivery": [
+                {
+                    "relationshipName": "project_links_to_entity",
+                    "direction": "inbound",
+                    "targetType": "TownsquareProject",
+                    "targets": [
+                        {
+                            "ari": (
+                                f"ari:cloud:townsquare:{ATLAS_CLOUD_ID}"
+                                ":project/1896d107-1c2b-4d3e-8f90-a1b2c3d4e5f6"
+                            ),
+                            "name": "[Impact] Rovo as a Sidekick",
+                            "url": atlas_url("project", "ATLAS-129010"),
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
 PAGE_BODY_MARKDOWN = f"""## Overview
 
 Atlas sync runs every 15 minutes. @Sam Ito owns the retry path.

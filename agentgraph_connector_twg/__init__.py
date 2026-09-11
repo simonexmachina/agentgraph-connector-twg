@@ -429,10 +429,30 @@ class TwgConnector(BaseConnector):
         entity_id: str,
         site: str | None,
     ) -> EntityBatch | None:
-        """Relationship context is best-effort: a work item is still worth indexing without it."""
+        """Relationship context is best-effort: a work item is still worth indexing without it.
+
+        `context get --types` rather than `context jira workitem`: the latter never
+        reports `project_links_to_entity`, so the Atlas project tracking the same
+        work never reaches the graph, and it returns one referenced Confluence page
+        where the type-selected traversal returns eleven. `--types` is a traversal
+        instruction, not a post-filter — the mapper still keeps whatever
+        `stub_for_url` can classify. `--type jira-workitem` is required because a
+        bare key is ambiguous with `atlas-goal`. `--first` stays at its default:
+        raising it only buys targets the connector cannot classify.
+        """
         try:
             envelope = await run_twg(
-                ["context", "jira", "workitem", key, "--detail", "summary"],
+                [
+                    "context",
+                    "get",
+                    key,
+                    "--type",
+                    "jira-workitem",
+                    "--types",
+                    ",".join(jira.CONTEXT_TARGET_TYPES),
+                    "--detail",
+                    "full",
+                ],
                 site=site,
             )
         except TwgError as exc:

@@ -45,6 +45,28 @@ stored `fetch_meta`). Core then prefers `fetch_meta["web_url"]`, then `entity_ur
 browsed URL. `EntityUpsertMutation` still carries the title and body by design — that is the point
 of a snapshot; this closes the leak on the observation signal and on `metadata["web_url"]`.
 
+## Work Item Context
+
+A work item's relationship context comes from `twg context get <key> --type jira-workitem --types
+<node types> --detail full` (`jira.CONTEXT_TARGET_TYPES`), not from `twg context jira workitem`.
+The per-product command never reports `project_links_to_entity`, so the Atlas project tracking the
+same work never reaches the graph, and it returns one referenced Confluence page where the
+type-selected traversal returns eleven. `--type jira-workitem` is not optional: a bare key is
+ambiguous with `atlas-goal` and the call fails.
+
+`--types` is a traversal instruction, not a post-filter. Unfiltered, `content_referenced_entity`
+reports `n=1` — the relationship's own count, not a truncated slice — and ten of eighteen
+relationship types come back `omittedByBudget`; naming the node types re-plans the traversal, so
+the same relationship on the same anchor reports `n=11` with nothing omitted. `twg` silently
+ignores type names it does not know, so the list is safe to extend as graph coverage appears.
+Leave `--first` at its default: raising it to the 200 maximum recovers none of those pages and
+spends the allocation on Bitbucket deployment URLs this connector cannot classify, at 3.4× the
+payload.
+
+`jira.context_to_batch` filters nothing itself — it walks every group, relationship, and target,
+keeping whatever `stubs.stub_for_url` can classify — and honours the direction `twg` reports, so
+both useful relationships, which come back `inbound`, produce edges running target → work item.
+
 ## Entity Types
 
 This connector targets AgentGraph 0.7.0 through 0.7.x (`pyproject.toml`), which is what provides

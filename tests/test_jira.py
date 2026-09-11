@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 from agentgraph.connectors.base import EntityRecord
-from conftest import classify_atlassian_urls, idea_payload, workitem_payload
+from conftest import ATLAS_CLOUD_ID as CLOUD
+from conftest import ATLAS_ORG_ID as ORG
+from conftest import (
+    classify_atlassian_urls,
+    idea_payload,
+    workitem_context_payload,
+    workitem_payload,
+)
 
 from agentgraph_connector_twg import jira, urls
 
@@ -142,11 +150,40 @@ def test_workitem_stubs_referenced_urls(monkeypatch: pytest.MonkeyPatch) -> None
     assert stub.platform_entity_id == "confluence/acme/884736"
 
 
-def test_context_maps_relationships_to_reference_edges(monkeypatch: pytest.MonkeyPatch) -> None:
+def _flat_context(relationships: list[dict[str, Any]]) -> dict[str, Any]:
+    """The flat shape the older per-product `twg context <product>` commands return."""
+    return {"object": {"key": "ENG-42"}, "relationshipSummary": relationships}
+
+
+def _grouped_context(relationships: list[dict[str, Any]]) -> dict[str, Any]:
+    """The `twg context get` shape: the same entries, spread across named groups."""
+    return {
+        "anchor": {"name": "ENG-42"},
+        "groups": {
+            "relationships": [],
+            "docs": relationships[:1],
+            "delivery": relationships[1:],
+        },
+    }
+
+
+_ContextShape = Callable[[list[dict[str, Any]]], dict[str, Any]]
+
+both_context_shapes = pytest.mark.parametrize(
+    "as_context",
+    [_flat_context, _grouped_context],
+    ids=["flat", "grouped"],
+)
+
+
+@both_context_shapes
+def test_context_maps_relationships_to_reference_edges(
+    monkeypatch: pytest.MonkeyPatch,
+    as_context: _ContextShape,
+) -> None:
     classify_atlassian_urls(monkeypatch)
-    payload = {
-        "object": {"key": "ENG-42"},
-        "relationshipSummary": [
+    payload = as_context(
+        [
             {
                 "relationshipName": "documented-by",
                 "direction": "OUTBOUND",
@@ -167,8 +204,8 @@ def test_context_maps_relationships_to_reference_edges(monkeypatch: pytest.Monke
                     {"name": "ENG-9", "url": "https://acme.atlassian.net/browse/ENG-9"},
                 ],
             },
-        ],
-    }
+        ]
+    )
 
     batch = jira.context_to_batch(payload, source_entity_id="jira/acme/ENG-42")
 
@@ -187,16 +224,20 @@ def test_context_maps_relationships_to_reference_edges(monkeypatch: pytest.Monke
     assert inbound.target_platform_entity_id == "jira/acme/ENG-42"
 
 
-def test_context_ignores_unclassifiable_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+@both_context_shapes
+def test_context_ignores_unclassifiable_targets(
+    monkeypatch: pytest.MonkeyPatch,
+    as_context: _ContextShape,
+) -> None:
     classify_atlassian_urls(monkeypatch)
-    payload = {
-        "relationshipSummary": [
+    payload = as_context(
+        [
             {
                 "relationshipName": "implemented-by",
                 "targets": [{"name": "PR 12", "url": "https://bitbucket.org/acme/repo/pull-requests/12"}],
             }
         ]
-    }
+    )
 
     batch = jira.context_to_batch(payload, source_entity_id="jira/acme/ENG-42")
 
@@ -204,20 +245,102 @@ def test_context_ignores_unclassifiable_targets(monkeypatch: pytest.MonkeyPatch)
     assert batch.edges == []
 
 
-def test_context_never_self_references(monkeypatch: pytest.MonkeyPatch) -> None:
+@both_context_shapes
+def test_context_never_self_references(
+    monkeypatch: pytest.MonkeyPatch,
+    as_context: _ContextShape,
+) -> None:
     classify_atlassian_urls(monkeypatch)
-    payload = {
-        "relationshipSummary": [
+    payload = as_context(
+        [
             {
                 "relationshipName": "self",
                 "targets": [{"url": "https://acme.atlassian.net/browse/ENG-42"}],
             }
         ]
-    }
+    )
 
     batch = jira.context_to_batch(payload, source_entity_id="jira/acme/ENG-42")
 
     assert batch.edges == []
+
+
+@both_context_shapes
+def test_context_keeps_one_edge_per_repeated_target(
+    monkeypatch: pytest.MonkeyPatch,
+    as_context: _ContextShape,
+) -> None:
+    classify_atlassian_urls(monkeypatch)
+    page_url = "https://acme.atlassian.net/wiki/spaces/ENG/pages/884736/Plan"
+    payload = as_context(
+        [
+            {"relationshipName": "documented-by", "targets": [{"url": page_url}]},
+            {"relationshipName": "mentioned-in", "targets": [{"url": page_url}, {"url": page_url}]},
+        ]
+    )
+
+    batch = jira.context_to_batch(payload, source_entity_id="jira/acme/ENG-42")
+
+    assert [entity.platform_entity_id for entity in batch.entities] == ["confluence/acme/884736"]
+    assert len(batch.edges) == 1
+
+
+def test_context_get_links_the_atlas_project_tracking_the_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classify_atlassian_urls(monkeypatch)
+
+    batch = jira.context_to_batch(
+        workitem_context_payload(), source_entity_id="jira/acme/ENG-42"
+    )
+
+    atlas_id = f"atlas/{ORG}/{CLOUD}/project/ATLAS-129010"
+    project = next(entity for entity in batch.entities if entity.platform_entity_id == atlas_id)
+    assert project.entity_type == "Task"
+    assert project.is_stub
+
+    edge = next(edge for edge in batch.edges if edge.source_platform_entity_id == atlas_id)
+    assert edge.edge_type == "references"
+    assert edge.target_platform_entity_id == "jira/acme/ENG-42"
+    assert edge.properties["relationship"] == "project_links_to_entity"
+
+
+def test_context_get_keeps_every_referenced_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    classify_atlassian_urls(monkeypatch)
+
+    batch = jira.context_to_batch(
+        workitem_context_payload(), source_entity_id="jira/acme/ENG-42"
+    )
+
+    pages = [entity for entity in batch.entities if entity.entity_type == "Document"]
+    assert {page.platform_entity_id for page in pages} == {
+        "confluence/acme/884736",
+        "confluence/acme/884737",
+    }
+    for page in pages:
+        edge = next(
+            edge
+            for edge in batch.edges
+            if edge.source_platform_entity_id == page.platform_entity_id
+        )
+        assert edge.target_platform_entity_id == "jira/acme/ENG-42"
+        assert edge.properties["relationship"] == "content_referenced_entity"
+
+
+def test_context_get_drops_deployments_and_people(monkeypatch: pytest.MonkeyPatch) -> None:
+    classify_atlassian_urls(monkeypatch)
+
+    batch = jira.context_to_batch(
+        workitem_context_payload(), source_entity_id="jira/acme/ENG-42"
+    )
+
+    # The `code` group's Bitbucket deployment and the `people` group's
+    # url-less IdentityUser are the only entries left, and neither survives.
+    assert len(batch.entities) == 3
+    assert len(batch.edges) == 3
+    assert not any("bitbucket" in (edge.source_platform_entity_id or "") for edge in batch.edges)
+    assert all(edge.source_platform_user_id is None for edge in batch.edges)
+    assert all(edge.target_platform_user_id is None for edge in batch.edges)
 
 
 def test_idea_records_its_project_type() -> None:

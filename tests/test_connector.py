@@ -20,6 +20,7 @@ from conftest import (
     page_context_payload,
     page_payload,
     video_payload,
+    workitem_context_payload,
     workitem_payload,
 )
 
@@ -193,16 +194,7 @@ async def test_fetch_workitem_includes_context_relationships(
     fake = _FakeTwg(
         {
             "jira workitem get": workitem_payload(),
-            "context jira workitem": {
-                "relationshipSummary": [
-                    {
-                        "relationshipName": "documented-by",
-                        "targets": [
-                            {"url": "https://acme.atlassian.net/wiki/spaces/ENG/pages/884736/Plan"}
-                        ],
-                    }
-                ]
-            },
+            "context get": workitem_context_payload(),
         }
     )
     _install(monkeypatch, fake)
@@ -212,7 +204,16 @@ async def test_fetch_workitem_includes_context_relationships(
 
     assert any(entity.entity_type == "Task" for entity in batch.entities)
     assert any(entity.platform_entity_id == "confluence/acme/884736" for entity in batch.entities)
+    assert any(
+        entity.platform_entity_id == f"atlas/{ORG}/{CLOUD}/project/ATLAS-129010"
+        for entity in batch.entities
+    )
     assert "jira workitem get ENG-42 --full" in fake.commands()
+    assert (
+        "context get ENG-42 --type jira-workitem --types "
+        "TownsquareProject,TownsquareGoal,ConfluencePage,ConfluenceBlogpost,JiraIssue,LoomVideo "
+        "--detail full"
+    ) in fake.commands()
 
 
 async def test_fetch_workitem_survives_missing_context(
@@ -224,7 +225,7 @@ async def test_fetch_workitem_survives_missing_context(
         _FakeTwg(
             {
                 "jira workitem get": workitem_payload(),
-                "context jira workitem": TwgCommandError("context unavailable"),
+                "context get": TwgCommandError("context unavailable"),
             }
         ),
     )
@@ -490,7 +491,7 @@ async def test_fetch_workitem_enriches_id_only_people_and_mentions(
     fake = _FakeTwg(
         {
             "jira workitem get": payload,
-            "context jira workitem": {"relationshipSummary": []},
+            "context get": {"anchor": {"name": "ENG-42"}, "groups": {"relationships": []}},
             "user bulk-lookup": {
                 "items": [
                     {
@@ -755,7 +756,7 @@ async def test_poll_hydrates_recent_activity_across_types(
         {
             "work query": _work_query_response(),
             "jira workitem get": workitem_payload(),
-            "context jira workitem": {"relationshipSummary": []},
+            "context get": {"anchor": {"name": "ENG-42"}, "groups": {"relationships": []}},
             "confluence content get": page_payload(),
             "confluence space get": {"key": "ENG", "name": "Engineering"},
             "loom get": video_payload(),
@@ -853,7 +854,7 @@ async def test_poll_respects_the_item_limit_and_deduplicates(
         {
             "work query": duplicated,
             "jira workitem get": workitem_payload(),
-            "context jira workitem": {"relationshipSummary": []},
+            "context get": {"anchor": {"name": "ENG-42"}, "groups": {"relationships": []}},
         }
     )
     _install(monkeypatch, fake)
@@ -943,7 +944,7 @@ async def test_ingest_sweeps_configured_jql_and_spaces(
                 ]
             },
             "jira workitem get": workitem_payload(key="ENG-9", url="https://acme.atlassian.net/browse/ENG-9"),
-            "context jira workitem": {"relationshipSummary": []},
+            "context get": {"anchor": {"name": "ENG-42"}, "groups": {"relationships": []}},
             "confluence space get": {"key": "ENG", "name": "Engineering"},
             "confluence content get": page_payload(),
         }

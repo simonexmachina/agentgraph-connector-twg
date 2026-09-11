@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Iterator, Mapping
+from typing import Any, Final
 
 from agentgraph.connectors.base import (
     EdgeRecord,
@@ -35,6 +35,24 @@ MAX_COMMENTS = 50
 
 MAX_ISSUE_LINKS = 50
 """Issue links turned into edges; `metadata.issue_link_count` reports the true total."""
+
+CONTEXT_TARGET_TYPES: Final[tuple[str, ...]] = (
+    "TownsquareProject",
+    "TownsquareGoal",
+    "ConfluencePage",
+    "ConfluenceBlogpost",
+    "JiraIssue",
+    "LoomVideo",
+)
+"""Graph node types `twg context get` is asked to reach.
+
+Not a filter on what is kept — the mapper keeps whatever `stub_for_url` can
+classify. Asking for the types is what makes the traversal reach them: without
+`--types`, `content_referenced_entity` reports one Confluence page where the
+type-selected traversal reports eleven, and ten relationship types are dropped
+by budget. `twg` silently ignores names it does not know, so listing a type the
+graph has no coverage for yet is free.
+"""
 
 
 def workitem_to_batch(payload: Mapping[str, Any], *, target: urls.TwgTarget) -> EntityBatch:
@@ -185,13 +203,10 @@ def context_to_batch(
     *,
     source_entity_id: str,
 ) -> EntityBatch:
-    """Turn `twg context jira workitem` relationships into stubs and `references` edges."""
+    """Turn `twg context get` relationships into stubs and `references` edges."""
     batch = EntityBatch()
     seen: set[str] = set()
-    for summary in as_sequence(pick(payload, "relationshipSummary", "relationships")):
-        relationship = as_mapping(summary)
-        if relationship is None:
-            continue
+    for relationship in _relationship_entries(payload):
         relationship_name = pick_str(relationship, "relationshipName", "name") or "related"
         outbound = (pick_str(relationship, "direction") or "OUTBOUND").upper() != "INBOUND"
         for raw_target in as_sequence(relationship.get("targets")):
@@ -224,6 +239,28 @@ def context_to_batch(
     return batch
 
 
+def _relationship_entries(payload: Mapping[str, Any]) -> Iterator[Mapping[str, Any]]:
+    """Yield relationship mappings from a `context get` envelope or the flat shape.
+
+    `twg context get` groups its relationships (`relationships`, `code`, `docs`,
+    `people`, `delivery`); the older per-product context commands return one flat
+    list. The group a relationship lands in carries no information the mapper
+    needs, so they are walked as one sequence.
+    """
+    groups = pick_mapping(payload, "groups")
+    if groups is not None:
+        for group in groups.values():
+            for entry in as_sequence(group):
+                mapping = as_mapping(entry)
+                if mapping is not None:
+                    yield mapping
+        return
+    for entry in as_sequence(pick(payload, "relationshipSummary", "relationships")):
+        mapping = as_mapping(entry)
+        if mapping is not None:
+            yield mapping
+
+
 def _raw_issue_links(payload: Mapping[str, Any], fields: Mapping[str, Any]) -> list[Any]:
     return as_sequence(pick(payload, "issuelinks", "issueLinks") or pick(fields, "issuelinks"))
 
@@ -241,7 +278,7 @@ def _issue_links(
 ) -> list[tuple[EntityRecord, EdgeRecord]]:
     """Turn Jira `issuelinks` into stubs and `references` edges.
 
-    `twg context jira workitem` does not report issue links, so this is the only
+    `twg context get` does not report issue links, so this is the only
     place a JPD idea's delivery tickets ("Polaris work item link") reach the
     graph. Each entry names the *other* issue: an `inwardIssue` sits on the
     inward side of the link, so the edge runs from it to this work item, while an
